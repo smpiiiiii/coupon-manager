@@ -9,11 +9,18 @@ const redis = new Redis({
   token: process.env.UPSTASH_REDIS_REST_TOKEN,
 });
 
-// パスコード（環境変数から取得）
-const PASSCODE = process.env.BCARE_PASSCODE || 'Bcare';
+// パスコード（Redisに保存、なければ環境変数→デフォルト値の順で取得）
+const DEFAULT_PASSCODE = process.env.BCARE_PASSCODE || 'Bcare';
+const PASSCODE_KEY = 'bcare:passcode';
 
 const DATA_KEY = 'bcare:data';
 const SESSION_PREFIX = 'bcare:session:';
+
+// 現在のパスコードを取得
+async function getPasscode() {
+  const saved = await redis.get(PASSCODE_KEY);
+  return saved || DEFAULT_PASSCODE;
+}
 
 // データの読み書き
 async function getData() {
@@ -49,7 +56,8 @@ module.exports = async (req, res) => {
     // === ログイン（パスコード認証） ===
     if (pathname === '/api/login' && req.method === 'POST') {
       const passcode = body.passcode || '';
-      if (passcode !== PASSCODE) {
+      const currentPasscode = await getPasscode();
+      if (passcode !== currentPasscode) {
         return res.status(401).json({ error: 'パスコードが違います' });
       }
       const token = crypto.randomBytes(16).toString('hex');
@@ -173,6 +181,20 @@ module.exports = async (req, res) => {
       if (idx === -1) return res.status(404).json({ error: '回数券が見つかりません' });
       c.tickets.splice(idx, 1);
       await saveData(data);
+      return res.status(200).json({ status: 'ok' });
+    }
+
+    // === パスコード変更 ===
+    if (pathname === '/api/change-passcode' && req.method === 'POST') {
+      const currentPasscode = await getPasscode();
+      if (body.current !== currentPasscode) {
+        return res.status(400).json({ error: '現在のパスコードが違います' });
+      }
+      const newPass = (body.newPasscode || '').trim();
+      if (!newPass || newPass.length < 2) {
+        return res.status(400).json({ error: 'パスコードは2文字以上で入力してください' });
+      }
+      await redis.set(PASSCODE_KEY, newPass);
       return res.status(200).json({ status: 'ok' });
     }
 

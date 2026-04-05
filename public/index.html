@@ -361,15 +361,41 @@ function switchTab(tab,el){
     document.getElementById('alerts').style.display='none';document.getElementById('stats').style.display='none';
     document.getElementById('customerList').innerHTML=`
       <div class="sec-title">⚙️ 設定</div>
+      <div class="settings-item" onclick="showChangePasscode()"><span class="s-label">🔑 パスコード変更</span><span class="s-value">→</span></div>
       <div class="settings-item" onclick="logout()"><span class="s-label">🚪 ログアウト</span><span class="s-value"></span></div>
       <div class="settings-item"><span class="s-label">📊 顧客数</span><span class="s-value">${DATA.customers.length}名</span></div>
-      <div class="settings-item"><span class="s-label">📱 バージョン</span><span class="s-value">1.0.0</span></div>`;
+      <div class="settings-item"><span class="s-label">📱 バージョン</span><span class="s-value">1.0.0</span></div>
+      <div id="passForm" style="display:none;margin-top:12px">
+        <div class="fg"><label>現在のパスコード</label><input id="currentPass" type="password" placeholder="現在のパスコード"></div>
+        <div class="fg"><label>新しいパスコード</label><input id="newPass" type="text" placeholder="新しいパスコード"></div>
+        <div id="passError" style="color:var(--red);font-size:11px;margin-bottom:8px;min-height:16px"></div>
+        <button class="btn-primary" onclick="changePasscode()">変更する</button>
+      </div>`;
   }
 }
 
 function logout(){
   if(!confirm('ログアウトしますか？'))return;
   authToken='';localStorage.removeItem('bcare_token');showLogin();
+}
+
+// === パスコード変更 ===
+function showChangePasscode(){
+  const f=document.getElementById('passForm');
+  if(f){f.style.display=f.style.display==='none'?'block':'none';}
+}
+async function changePasscode(){
+  const cur=document.getElementById('currentPass').value;
+  const nw=document.getElementById('newPass').value.trim();
+  const errEl=document.getElementById('passError');
+  errEl.textContent='';
+  if(!cur){errEl.textContent='現在のパスコードを入力してください';return;}
+  if(!nw||nw.length<2){errEl.textContent='新しいパスコードは2文字以上';return;}
+  try{
+    const r=await api('/api/change-passcode','POST',{current:cur,newPasscode:nw});
+    if(r.error){errEl.textContent=r.error;return;}
+    alert('パスコードを変更しました！');document.getElementById('currentPass').value='';document.getElementById('newPass').value='';document.getElementById('passForm').style.display='none';
+  }catch(e){errEl.textContent='エラーが発生しました';}
 }
 
 // === 顧客追加 ===
