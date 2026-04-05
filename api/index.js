@@ -1,5 +1,5 @@
 // B-care 回数券管理アプリ — Vercel サーバーレスAPI
-// Upstash Redis でデータ永続化（薬剤管理とインスタンス共有、プレフィックスで分離）
+// Upstash Redis でデータ永続化（bcare: プレフィックスで薬剤管理と分離）
 const { Redis } = require('@upstash/redis');
 const crypto = require('crypto');
 
@@ -9,7 +9,11 @@ const redis = new Redis({
   token: process.env.UPSTASH_REDIS_REST_TOKEN,
 });
 
+// パスコード（環境変数から取得）
+const PASSCODE = process.env.BCARE_PASSCODE || 'Bcare';
+
 const DATA_KEY = 'bcare:data';
+const SESSION_PREFIX = 'bcare:session:';
 
 // データの読み書き
 async function getData() {
@@ -22,11 +26,19 @@ async function saveData(data) {
   await redis.set(DATA_KEY, JSON.stringify(data));
 }
 
+// セッション検証
+async function validateSession(req) {
+  const token = req.headers['x-auth-token'] || '';
+  if (!token) return false;
+  const valid = await redis.get(`${SESSION_PREFIX}${token}`);
+  return !!valid;
+}
+
 module.exports = async (req, res) => {
   // CORS対応
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Auth-Token');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   const url = new URL(req.url, `https://${req.headers.host}`);
@@ -34,10 +46,33 @@ module.exports = async (req, res) => {
   const body = req.body || {};
 
   try {
+    // === ログイン（パスコード認証） ===
+    if (pathname === '/api/login' && req.method === 'POST') {
+      const passcode = body.passcode || '';
+      if (passcode !== PASSCODE) {
+        return res.status(401).json({ error: 'パスコードが違います' });
+      }
+      const token = crypto.randomBytes(16).toString('hex');
+      // セッションは90日間有効
+      await redis.set(`${SESSION_PREFIX}${token}`, '1', { ex: 60 * 60 * 24 * 90 });
+      return res.status(200).json({ token });
+    }
+
+    // === セッション確認 ===
+    if (pathname === '/api/verify' && req.method === 'GET') {
+      const valid = await validateSession(req);
+      return res.status(200).json({ valid });
+    }
+
+    // === 認証チェック（ログイン以外は全て認証必須） ===
+    const authed = await validateSession(req);
+    if (!authed) {
+      return res.status(401).json({ error: 'ログインが必要です' });
+    }
+
     // === 全データ取得 ===
     if (pathname === '/api/data' && req.method === 'GET') {
       const data = await getData();
-      // 休眠アラート計算
       const now = Date.now();
       const alerts = { month1: [], month3: [], month6: [] };
       for (const c of data.customers) {
@@ -121,12 +156,10 @@ module.exports = async (req, res) => {
       const t = c.tickets.find(t => t.tid === body.tid);
       if (!t) return res.status(404).json({ error: '回数券が見つかりません' });
       if (t.remaining <= 0) return res.status(400).json({ error: '回数券の残りがありません' });
-
       t.remaining--;
       const today = new Date().toISOString().split('T')[0];
       t.usageLog.push(today);
       c.lastVisit = today;
-
       await saveData(data);
       return res.status(200).json({ status: 'ok', remaining: t.remaining });
     }
