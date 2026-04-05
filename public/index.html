@@ -237,6 +237,25 @@ body{font-family:'Noto Sans JP','Inter',sans-serif;background:var(--bg);color:va
   </div>
 </div>
 
+<!-- モーダル: CSVインポート -->
+<div class="modal-overlay" id="csvOverlay" onclick="closeCsv()"></div>
+<div class="modal" id="csvModal">
+  <div class="modal-header"><button class="back" onclick="closeCsv()">← 戻る</button><h2>📤 CSVインポート</h2></div>
+  <div class="modal-body">
+    <div style="font-size:11px;color:var(--text3);margin-bottom:12px;line-height:1.6">
+      スプレッドシートやCSVから顧客を一括登録できます。<br>
+      <b>形式:</b> 名前, 電話番号, メモ（1行1顧客）<br>
+      <b>例:</b><br>
+      <code style="font-size:10px;color:var(--accent);background:var(--card);padding:4px 8px;border-radius:4px;display:block;margin-top:4px">田中花子,090-1234-5678,肩こり<br>佐藤太郎,080-9876-5432,腰痛</code>
+    </div>
+    <div class="fg"><label>データを貼り付け（CSV/TSV）</label><textarea id="csvData" style="height:160px;font-size:12px;font-family:monospace" placeholder="名前,電話番号,メモ&#10;田中花子,090-1234-5678,肩こり"></textarea></div>
+    <div style="display:flex;gap:8px;margin-bottom:12px"><label style="flex:1;text-align:center;padding:10px;background:var(--card);border:1px dashed var(--border);border-radius:10px;cursor:pointer;font-size:12px;color:var(--text2);font-weight:700">📁 CSVファイルを選択<input type="file" id="csvFile" accept=".csv,.tsv,.txt" style="display:none" onchange="loadCsvFile(this)"></label></div>
+    <div id="csvPreview" style="margin-bottom:12px"></div>
+    <div id="csvError" style="color:var(--red);font-size:11px;margin-bottom:8px;min-height:16px"></div>
+    <button class="btn-primary" onclick="doCsvImport()">インポート実行</button>
+  </div>
+</div>
+
 <script>
 let DATA={customers:[],alerts:{month1:[],month3:[],month6:[]}};
 let authToken=localStorage.getItem('bcare_token')||'';
@@ -361,6 +380,7 @@ function switchTab(tab,el){
     document.getElementById('alerts').style.display='none';document.getElementById('stats').style.display='none';
     document.getElementById('customerList').innerHTML=`
       <div class="sec-title">⚙️ 設定</div>
+      <div class="settings-item" onclick="openCsvImport()"><span class="s-label">📤 CSVインポート</span><span class="s-value">→</span></div>
       <div class="settings-item" onclick="showChangePasscode()"><span class="s-label">🔑 パスコード変更</span><span class="s-value">→</span></div>
       <div class="settings-item" onclick="logout()"><span class="s-label">🚪 ログアウト</span><span class="s-value"></span></div>
       <div class="settings-item"><span class="s-label">📊 顧客数</span><span class="s-value">${DATA.customers.length}名</span></div>
@@ -397,6 +417,60 @@ async function changePasscode(){
     alert('パスコードを変更しました！');document.getElementById('currentPass').value='';document.getElementById('newPass').value='';document.getElementById('passForm').style.display='none';
   }catch(e){errEl.textContent='エラーが発生しました';}
 }
+
+// === CSVインポート ===
+function openCsvImport(){
+  document.getElementById('csvData').value='';
+  document.getElementById('csvPreview').innerHTML='';
+  document.getElementById('csvError').textContent='';
+  if(document.getElementById('csvFile'))document.getElementById('csvFile').value='';
+  openModal('csv');
+}
+function closeCsv(){closeModal('csv');}
+function loadCsvFile(input){
+  const file=input.files[0];if(!file)return;
+  const reader=new FileReader();
+  reader.onload=e=>{document.getElementById('csvData').value=e.target.result;previewCsv();};
+  reader.readAsText(file,'UTF-8');
+}
+function parseCsvData(){
+  const raw=document.getElementById('csvData').value.trim();
+  if(!raw)return[];
+  const lines=raw.split(/\r?\n/).filter(l=>l.trim());
+  // ヘッダー行スキップ（名前/name等で始まる場合）
+  let start=0;
+  if(lines.length>0&&/^(名前|name|お名前)/i.test(lines[0].split(/[,\t]/)[0].trim()))start=1;
+  const items=[];
+  for(let i=start;i<lines.length;i++){
+    const cols=lines[i].split(/[,\t]/);
+    items.push({name:(cols[0]||'').trim(),phone:(cols[1]||'').trim(),memo:(cols[2]||'').trim()});
+  }
+  return items;
+}
+function previewCsv(){
+  const items=parseCsvData();
+  if(!items.length){document.getElementById('csvPreview').innerHTML='';return;}
+  let h=`<div style="font-size:11px;color:var(--text2);margin-bottom:4px">${items.length}件のデータ：</div>`;
+  h+='<div style="max-height:120px;overflow-y:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:6px">';
+  items.slice(0,20).forEach((it,i)=>{
+    h+=`<div style="font-size:10px;padding:2px 0;border-bottom:1px solid var(--border)"><b>${esc(it.name)}</b>${it.phone?' ・ '+esc(it.phone):''}${it.memo?' ・ '+esc(it.memo):''}</div>`;
+  });
+  if(items.length>20)h+=`<div style="font-size:9px;color:var(--text3);padding:4px">...他${items.length-20}件</div>`;
+  h+='</div>';
+  document.getElementById('csvPreview').innerHTML=h;
+}
+async function doCsvImport(){
+  const items=parseCsvData();
+  if(!items.length){document.getElementById('csvError').textContent='データを入力してください';return;}
+  try{
+    const r=await api('/api/bulk-import','POST',{items});
+    if(r.error){document.getElementById('csvError').textContent=r.error;return;}
+    let msg=`${r.added}件を登録しました！`;
+    if(r.errors&&r.errors.length)msg+=`\n${r.errors.length}件スキップ: ${r.errors.map(e=>e.error).join(', ')}`;
+    alert(msg);closeCsv();await load();
+  }catch(e){document.getElementById('csvError').textContent='通信エラー';}
+}
+document.getElementById('csvData').addEventListener('input',previewCsv);
 
 // === 顧客追加 ===
 function openAddCustomer(){document.getElementById('addName').value='';document.getElementById('addPhone').value='';document.getElementById('addMemo').value='';openModal('add');}

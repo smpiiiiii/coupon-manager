@@ -198,6 +198,43 @@ module.exports = async (req, res) => {
       return res.status(200).json({ status: 'ok' });
     }
 
+    // === CSV一括インポート ===
+    if (pathname === '/api/bulk-import' && req.method === 'POST') {
+      const data = await getData();
+      const items = body.items || [];
+      if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: 'インポートするデータがありません' });
+      }
+      if (items.length > 500) {
+        return res.status(400).json({ error: '一度に500件までです' });
+      }
+      const added = [];
+      const errors = [];
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const name = (item.name || '').trim();
+        if (!name) { errors.push({ row: i + 1, error: '名前が空です' }); continue; }
+        // 同名の顧客がいたらスキップ（重複防止）
+        if (data.customers.find(c => c.name === name)) {
+          errors.push({ row: i + 1, error: `「${name}」は既に登録済み` });
+          continue;
+        }
+        const customer = {
+          cid: crypto.randomBytes(4).toString('hex'),
+          name,
+          phone: (item.phone || '').trim(),
+          memo: (item.memo || '').trim(),
+          tickets: [],
+          lastVisit: null,
+          createdAt: new Date().toISOString(),
+        };
+        data.customers.push(customer);
+        added.push(customer);
+      }
+      await saveData(data);
+      return res.status(200).json({ status: 'ok', added: added.length, errors });
+    }
+
     return res.status(404).json({ error: 'Not found' });
   } catch (err) {
     console.error('API Error:', err);
