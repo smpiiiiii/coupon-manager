@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>B-care 回数券管理</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&family=Noto+Sans+JP:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+/* === リセット & ベース === */
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0a0e1a;--surface:#131829;--card:#1a2035;--border:#252d44;
+  --text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;
+  --accent:#38bdf8;--accent2:#0ea5e9;--green:#22c55e;--yellow:#eab308;--orange:#f97316;--red:#ef4444;--purple:#a78bfa;
+}
+html,body{background:var(--bg);color:var(--text);font-family:'Noto Sans JP','Inter',sans-serif;min-height:100vh;-webkit-font-smoothing:antialiased}
+
+/* === レイアウト === */
+.app{max-width:480px;margin:0 auto;padding:0 0 100px 0;min-height:100vh}
+.header{position:sticky;top:0;z-index:100;background:linear-gradient(180deg,var(--bg) 0%,var(--bg) 85%,transparent);padding:16px 16px 24px}
+.header h1{font-size:20px;font-weight:900;background:linear-gradient(135deg,var(--accent),#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:-.5px}
+.header .sub{font-size:10px;color:var(--text3);margin-top:2px;letter-spacing:1px}
+.content{padding:0 16px}
+
+/* === アラートカード === */
+.alerts{display:flex;flex-direction:column;gap:8px;margin-bottom:20px}
+.alert-card{border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;transition:transform .15s}
+.alert-card:active{transform:scale(.97)}
+.alert-card .icon{font-size:20px;flex-shrink:0}
+.alert-card .info{flex:1}
+.alert-card .label{font-size:11px;font-weight:700;opacity:.8}
+.alert-card .count{font-size:22px;font-weight:900;line-height:1}
+.alert-card .detail{font-size:9px;opacity:.6;margin-top:2px}
+.alert-1m{background:linear-gradient(135deg,rgba(234,179,8,.15),rgba(234,179,8,.05));border:1px solid rgba(234,179,8,.3);color:#fbbf24}
+.alert-3m{background:linear-gradient(135deg,rgba(249,115,22,.15),rgba(249,115,22,.05));border:1px solid rgba(249,115,22,.3);color:#fb923c}
+.alert-6m{background:linear-gradient(135deg,rgba(239,68,68,.15),rgba(239,68,68,.05));border:1px solid rgba(239,68,68,.3);color:#f87171}
+
+/* === 統計バー === */
+.stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:20px}
+.stat{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px;text-align:center}
+.stat .num{font-size:20px;font-weight:900;color:var(--accent)}
+.stat .lbl{font-size:9px;color:var(--text3);margin-top:2px}
+
+/* === 検索バー === */
+.search-bar{display:flex;gap:8px;margin-bottom:16px}
+.search-bar input{flex:1;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--text);font-size:14px;outline:none;transition:border .2s}
+.search-bar input:focus{border-color:var(--accent)}
+.search-bar input::placeholder{color:var(--text3)}
+.btn-add{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;border:none;border-radius:10px;padding:10px 16px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;transition:transform .15s}
+.btn-add:active{transform:scale(.95)}
+
+/* === 顧客カード === */
+.customer-list{display:flex;flex-direction:column;gap:10px}
+.customer-card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;cursor:pointer;transition:transform .15s,border .2s}
+.customer-card:active{transform:scale(.98)}
+.customer-card:hover{border-color:var(--accent)}
+.customer-card .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.customer-card .name{font-size:15px;font-weight:700}
+.customer-card .dormancy{font-size:10px;font-weight:700;padding:2px 8px;border-radius:6px}
+.dormancy-ok{background:rgba(34,197,94,.15);color:var(--green)}
+.dormancy-1m{background:rgba(234,179,8,.15);color:#fbbf24}
+.dormancy-3m{background:rgba(249,115,22,.15);color:#fb923c}
+.dormancy-6m{background:rgba(239,68,68,.15);color:#f87171}
+.customer-card .meta{font-size:11px;color:var(--text3);margin-bottom:8px}
+.ticket-chips{display:flex;flex-wrap:wrap;gap:4px}
+.ticket-chip{font-size:10px;font-weight:700;padding:3px 8px;border-radius:6px;background:rgba(56,189,248,.12);color:var(--accent);border:1px solid rgba(56,189,248,.2)}
+.ticket-chip.empty{background:rgba(100,116,139,.1);color:var(--text3);border-color:var(--border)}
+
+/* === モーダル === */
+.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.7);z-index:200;display:none;align-items:flex-end;justify-content:center;backdrop-filter:blur(4px)}
+.modal-overlay.show{display:flex}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:20px 20px 0 0;width:100%;max-width:480px;max-height:85vh;overflow-y:auto;padding:24px 20px 32px;animation:slideUp .25s ease}
+@keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+.modal h2{font-size:17px;font-weight:900;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.modal .close{margin-left:auto;background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer;padding:4px}
+.form-group{margin-bottom:14px}
+.form-group label{display:block;font-size:11px;color:var(--text3);font-weight:700;margin-bottom:4px}
+.form-group input,.form-group textarea,.form-group select{width:100%;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 12px;color:var(--text);font-size:14px;outline:none;font-family:inherit;transition:border .2s}
+.form-group input:focus,.form-group textarea:focus,.form-group select:focus{border-color:var(--accent)}
+.form-group textarea{resize:none;height:60px}
+.form-group select{appearance:none}
+.btn-primary{width:100%;padding:14px;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;transition:transform .15s}
+.btn-primary:active{transform:scale(.97)}
+.btn-danger{width:100%;padding:12px;background:rgba(239,68,68,.15);color:var(--red);border:1px solid rgba(239,68,68,.3);border-radius:12px;font-size:13px;font-weight:700;cursor:pointer;margin-top:8px;transition:transform .15s}
+.btn-danger:active{transform:scale(.97)}
+
+/* === 顧客詳細 === */
+.detail-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.detail-name{font-size:20px;font-weight:900}
+.detail-phone{font-size:12px;color:var(--text3);margin-bottom:4px}
+.detail-memo{font-size:11px;color:var(--text2);margin-bottom:16px;background:var(--card);padding:8px 10px;border-radius:8px;border:1px solid var(--border)}
+.detail-section{margin-bottom:16px}
+.detail-section h3{font-size:13px;font-weight:700;color:var(--text2);margin-bottom:8px;display:flex;align-items:center;gap:6px}
+
+/* === 回数券詳細カード === */
+.ticket-detail{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:8px}
+.ticket-detail .ticket-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.ticket-detail .ticket-type{font-size:13px;font-weight:900;color:var(--accent)}
+.ticket-detail .ticket-date{font-size:10px;color:var(--text3)}
+.ticket-bar{height:8px;background:var(--border);border-radius:4px;overflow:hidden;margin-bottom:6px}
+.ticket-bar .fill{height:100%;border-radius:4px;transition:width .3s}
+.ticket-remaining{font-size:11px;font-weight:700;color:var(--text2)}
+.btn-use{padding:8px 16px;background:linear-gradient(135deg,var(--green),#16a34a);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;transition:transform .15s}
+.btn-use:active{transform:scale(.95)}
+.btn-use:disabled{opacity:.4;cursor:not-allowed}
+.btn-ticket-del{background:none;border:none;color:var(--text3);font-size:11px;cursor:pointer;padding:4px}
+
+/* === チケット選択ボタン === */
+.ticket-types{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:16px}
+.ticket-type-btn{background:var(--card);border:2px solid var(--border);border-radius:10px;padding:12px 4px;text-align:center;cursor:pointer;transition:all .15s;font-weight:700;font-size:14px;color:var(--text2)}
+.ticket-type-btn:hover,.ticket-type-btn.selected{border-color:var(--accent);color:var(--accent);background:rgba(56,189,248,.08)}
+.ticket-type-btn span{display:block;font-size:9px;font-weight:500;color:var(--text3);margin-top:2px}
+
+/* === 来店履歴 === */
+.visit-list{display:flex;flex-direction:column;gap:4px}
+.visit-item{font-size:11px;color:var(--text2);padding:4px 8px;background:var(--card);border-radius:6px;border:1px solid var(--border)}
+
+/* === 空状態 === */
+.empty-state{text-align:center;padding:40px 20px;color:var(--text3)}
+.empty-state .icon{font-size:40px;margin-bottom:12px}
+.empty-state p{font-size:13px;line-height:1.6}
+
+/* === アラート顧客ドロワー === */
+.alert-drawer{margin-bottom:16px;display:none}
+.alert-drawer.show{display:block}
+.alert-drawer-title{font-size:12px;font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.alert-drawer .customer-card{border-left:3px solid}
+.alert-drawer .customer-card.left-1m{border-left-color:#fbbf24}
+.alert-drawer .customer-card.left-3m{border-left-color:#fb923c}
+.alert-drawer .customer-card.left-6m{border-left-color:#f87171}
+
+/* === ローディング === */
+.loading{text-align:center;padding:60px;color:var(--text3);font-size:13px}
+.spinner{width:32px;height:32px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 12px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+@media(max-width:380px){.ticket-types{grid-template-columns:repeat(3,1fr)}}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <!-- ヘッダー -->
+  <div class="header">
+    <h1>💆 B-care 回数券管理</h1>
+    <div class="sub">COUPON TICKET MANAGER</div>
+  </div>
+
+  <div class="content">
+    <!-- ローディング -->
+    <div class="loading" id="loading">
+      <div class="spinner"></div>
+      読み込み中...
+    </div>
+
+    <!-- メインコンテンツ（ロード後表示） -->
+    <div id="main" style="display:none">
+      <!-- 休眠アラート -->
+      <div class="alerts" id="alerts"></div>
+
+      <!-- アラートドロワー -->
+      <div class="alert-drawer" id="alertDrawer"></div>
+
+      <!-- 統計 -->
+      <div class="stats" id="stats"></div>
+
+      <!-- 検索 + 追加 -->
+      <div class="search-bar">
+        <input type="text" id="searchInput" placeholder="🔍 顧客を検索...">
+        <button class="btn-add" onclick="showAddCustomer()">＋ 新規</button>
+      </div>
+
+      <!-- 顧客一覧 -->
+      <div class="customer-list" id="customerList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 顧客追加モーダル -->
+<div class="modal-overlay" id="addModal">
+  <div class="modal">
+    <h2>👤 新規顧客登録<button class="close" onclick="closeModal('addModal')">✕</button></h2>
+    <div class="form-group"><label>お名前 *</label><input id="addName" placeholder="例: 田中花子"></div>
+    <div class="form-group"><label>電話番号</label><input id="addPhone" placeholder="例: 090-1234-5678" type="tel"></div>
+    <div class="form-group"><label>メモ</label><textarea id="addMemo" placeholder="例: 肩こり、腰痛"></textarea></div>
+    <button class="btn-primary" onclick="addCustomer()">登録する</button>
+  </div>
+</div>
+
+<!-- 顧客詳細モーダル -->
+<div class="modal-overlay" id="detailModal">
+  <div class="modal" id="detailContent"></div>
+</div>
+
+<!-- 回数券追加モーダル -->
+<div class="modal-overlay" id="ticketModal">
+  <div class="modal">
+    <h2>🎫 回数券を追加<button class="close" onclick="closeModal('ticketModal')">✕</button></h2>
+    <p style="font-size:12px;color:var(--text3);margin-bottom:12px" id="ticketForName"></p>
+    <div class="ticket-types" id="ticketTypes"></div>
+    <button class="btn-primary" id="ticketAddBtn" onclick="addTicket()">追加する</button>
+  </div>
+</div>
+
+<script>
+// === 状態管理 ===
+let DATA = { customers: [], alerts: { month1: [], month3: [], month6: [] } };
+let currentFilter = null; // 'month1','month3','month6'
+let selectedTicketType = null;
+let selectedCustomerCid = null;
+
+const API = '';
+
+// === API呼び出し ===
+async function api(path, method = 'GET', body = null) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(API + path, opts);
+  return res.json();
+}
+
+// === 初期ロード ===
+async function load() {
+  try {
+    DATA = await api('/api/data');
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('main').style.display = 'block';
+    render();
+  } catch (e) {
+    document.getElementById('loading').innerHTML = '<div style="color:var(--red)">❌ データ読み込みエラー<br><small>' + e.message + '</small></div>';
+  }
+}
+
+// === レンダリング ===
+function render() {
+  renderAlerts();
+  renderStats();
+  renderCustomerList();
+}
+
+function renderAlerts() {
+  const a = DATA.alerts || { month1: [], month3: [], month6: [] };
+  let html = '';
+  if (a.month6.length > 0) {
+    html += `<div class="alert-card alert-6m" onclick="toggleAlertDrawer('month6')">
+      <div class="icon">🔴</div><div class="info"><div class="label">半年以上 未来店</div><div class="count">${a.month6.length}名</div><div class="detail">タップで一覧表示</div></div></div>`;
+  }
+  if (a.month3.length > 0) {
+    html += `<div class="alert-card alert-3m" onclick="toggleAlertDrawer('month3')">
+      <div class="icon">🟠</div><div class="info"><div class="label">3ヶ月以上 未来店</div><div class="count">${a.month3.length}名</div><div class="detail">タップで一覧表示</div></div></div>`;
+  }
+  if (a.month1.length > 0) {
+    html += `<div class="alert-card alert-1m" onclick="toggleAlertDrawer('month1')">
+      <div class="icon">🟡</div><div class="info"><div class="label">1ヶ月以上 未来店</div><div class="count">${a.month1.length}名</div><div class="detail">タップで一覧表示</div></div></div>`;
+  }
+  document.getElementById('alerts').innerHTML = html;
+}
+
+function renderStats() {
+  const total = DATA.customers.length;
+  const activeTickets = DATA.customers.reduce((sum, c) => sum + c.tickets.filter(t => t.remaining > 0).length, 0);
+  const dormant = (DATA.alerts.month1?.length || 0) + (DATA.alerts.month3?.length || 0) + (DATA.alerts.month6?.length || 0);
+  document.getElementById('stats').innerHTML = `
+    <div class="stat"><div class="num">${total}</div><div class="lbl">総顧客数</div></div>
+    <div class="stat"><div class="num" style="color:var(--green)">${activeTickets}</div><div class="lbl">有効回数券</div></div>
+    <div class="stat"><div class="num" style="color:${dormant > 0 ? 'var(--orange)' : 'var(--green)'}">${dormant}</div><div class="lbl">休眠顧客</div></div>`;
+}
+
+function renderCustomerList(filter) {
+  const query = document.getElementById('searchInput').value.toLowerCase();
+  let customers = DATA.customers;
+
+  // 休眠フィルター
+  if (filter) {
+    const alertList = DATA.alerts[filter] || [];
+    const cids = new Set(alertList.map(c => c.cid));
+    customers = customers.filter(c => cids.has(c.cid));
+  }
+
+  // 検索フィルター
+  if (query) {
+    customers = customers.filter(c =>
+      c.name.toLowerCase().includes(query) ||
+      (c.phone || '').includes(query) ||
+      (c.memo || '').toLowerCase().includes(query)
+    );
+  }
+
+  // 最終来店日の古い順にソート
+  customers.sort((a, b) => {
+    if (!a.lastVisit && !b.lastVisit) return 0;
+    if (!a.lastVisit) return -1;
+    if (!b.lastVisit) return 1;
+    return new Date(a.lastVisit) - new Date(b.lastVisit);
+  });
+
+  if (customers.length === 0) {
+    document.getElementById('customerList').innerHTML = `<div class="empty-state"><div class="icon">👥</div><p>${query ? '該当する顧客がいません' : 'まだ顧客がいません<br>「＋ 新規」から登録しましょう'}</p></div>`;
+    return;
+  }
+
+  document.getElementById('customerList').innerHTML = customers.map(c => {
+    const diffDays = c._diffDays || (c.lastVisit ? Math.floor((Date.now() - new Date(c.lastVisit).getTime()) / 86400000) : null);
+    let dormancyClass = 'dormancy-ok', dormancyText = '稼働中';
+    if (diffDays === null) { dormancyClass = ''; dormancyText = '未来店'; }
+    else if (diffDays >= 180) { dormancyClass = 'dormancy-6m'; dormancyText = `${diffDays}日`; }
+    else if (diffDays >= 90) { dormancyClass = 'dormancy-3m'; dormancyText = `${diffDays}日`; }
+    else if (diffDays >= 30) { dormancyClass = 'dormancy-1m'; dormancyText = `${diffDays}日`; }
+    else { dormancyText = `${diffDays}日前`; }
+
+    const activeTickets = c.tickets.filter(t => t.remaining > 0);
+    const chips = activeTickets.length > 0
+      ? activeTickets.map(t => `<span class="ticket-chip">${t.type}回券 残${t.remaining}</span>`).join('')
+      : '<span class="ticket-chip empty">回数券なし</span>';
+
+    return `<div class="customer-card" onclick="showDetail('${c.cid}')">
+      <div class="top"><span class="name">${esc(c.name)}</span><span class="dormancy ${dormancyClass}">${dormancyText}</span></div>
+      <div class="meta">${c.phone ? '📞 ' + esc(c.phone) : ''}${c.lastVisit ? ' ・ 最終来店: ' + c.lastVisit : ' ・ 未来店'}</div>
+      <div class="ticket-chips">${chips}</div>
+    </div>`;
+  }).join('');
+}
+
+// === アラートドロワー ===
+function toggleAlertDrawer(type) {
+  const drawer = document.getElementById('alertDrawer');
+  if (currentFilter === type) {
+    currentFilter = null;
+    drawer.classList.remove('show');
+    renderCustomerList();
+    return;
+  }
+  currentFilter = type;
+  const labels = { month1: '🟡 1ヶ月以上 未来店', month3: '🟠 3ヶ月以上 未来店', month6: '🔴 半年以上 未来店' };
+  drawer.innerHTML = `<div class="alert-drawer-title">${labels[type]} — タップで詳細</div>`;
+  drawer.classList.add('show');
+  renderCustomerList(type);
+}
+
+// === 顧客追加 ===
+function showAddCustomer() {
+  document.getElementById('addName').value = '';
+  document.getElementById('addPhone').value = '';
+  document.getElementById('addMemo').value = '';
+  showModal('addModal');
+}
+
+async function addCustomer() {
+  const name = document.getElementById('addName').value.trim();
+  if (!name) return alert('お名前を入力してください');
+  const res = await api('/api/customer', 'POST', {
+    name,
+    phone: document.getElementById('addPhone').value.trim(),
+    memo: document.getElementById('addMemo').value.trim(),
+  });
+  if (res.error) return alert(res.error);
+  closeModal('addModal');
+  await load();
+}
+
+// === 顧客詳細 ===
+function showDetail(cid) {
+  selectedCustomerCid = cid;
+  const c = DATA.customers.find(c => c.cid === cid);
+  if (!c) return;
+
+  const activeTickets = c.tickets.filter(t => t.remaining > 0);
+  const usedTickets = c.tickets.filter(t => t.remaining <= 0);
+
+  // 全利用日を集約して新しい順
+  const allVisits = [];
+  c.tickets.forEach(t => {
+    t.usageLog.forEach(d => allVisits.push(d));
+  });
+  allVisits.sort((a, b) => b.localeCompare(a));
+
+  let html = `<h2>👤 ${esc(c.name)}<button class="close" onclick="closeModal('detailModal')">✕</button></h2>`;
+  if (c.phone) html += `<div class="detail-phone">📞 ${esc(c.phone)}</div>`;
+  if (c.memo) html += `<div class="detail-memo">📝 ${esc(c.memo)}</div>`;
+
+  // 編集・削除ボタン
+  html += `<div style="display:flex;gap:6px;margin-bottom:16px">
+    <button style="flex:1;padding:8px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text2);font-size:11px;cursor:pointer;font-weight:700" onclick="editCustomer('${cid}')">✏️ 編集</button>
+    <button style="flex:1;padding:8px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.2);border-radius:8px;color:var(--red);font-size:11px;cursor:pointer;font-weight:700" onclick="deleteCustomer('${cid}')">🗑 削除</button>
+  </div>`;
+
+  // 有効回数券
+  html += `<div class="detail-section"><h3>🎫 有効な回数券 <button style="margin-left:auto;padding:4px 10px;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;border:none;border-radius:6px;font-size:10px;font-weight:700;cursor:pointer" onclick="showAddTicket('${cid}')">＋ 追加</button></h3>`;
+  if (activeTickets.length > 0) {
+    activeTickets.forEach(t => {
+      const pct = Math.round((t.remaining / t.type) * 100);
+      const color = pct > 50 ? 'var(--green)' : pct > 20 ? 'var(--yellow)' : 'var(--red)';
+      html += `<div class="ticket-detail">
+        <div class="ticket-top"><span class="ticket-type">${t.type}回券</span><span class="ticket-date">購入: ${t.purchasedAt}</span></div>
+        <div class="ticket-bar"><div class="fill" style="width:${pct}%;background:${color}"></div></div>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span class="ticket-remaining">残り <b style="color:${color}">${t.remaining}</b> / ${t.type} 回</span>
+          <div style="display:flex;gap:6px;align-items:center">
+            <button class="btn-use" onclick="useTicket('${cid}','${t.tid}')" ${t.remaining <= 0 ? 'disabled' : ''}>✓ 利用する</button>
+            <button class="btn-ticket-del" onclick="deleteTicket('${cid}','${t.tid}')">🗑</button>
+          </div>
+        </div>
+      </div>`;
+    });
+  } else {
+    html += '<div style="font-size:12px;color:var(--text3);padding:12px;text-align:center">有効な回数券がありません</div>';
+  }
+  html += '</div>';
+
+  // 使い切った回数券
+  if (usedTickets.length > 0) {
+    html += `<div class="detail-section"><h3 style="color:var(--text3)">📋 使い切った回数券</h3>`;
+    usedTickets.forEach(t => {
+      html += `<div class="ticket-detail" style="opacity:.5">
+        <div class="ticket-top"><span class="ticket-type" style="color:var(--text3)">${t.type}回券（完了）</span><span class="ticket-date">${t.purchasedAt}</span></div>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span class="ticket-remaining">0 / ${t.type} 回</span>
+          <button class="btn-ticket-del" onclick="deleteTicket('${cid}','${t.tid}')">🗑</button>
+        </div>
+      </div>`;
+    });
+    html += '</div>';
+  }
+
+  // 来店履歴
+  html += `<div class="detail-section"><h3>📅 来店履歴（最新10件）</h3>`;
+  if (allVisits.length > 0) {
+    html += '<div class="visit-list">' + allVisits.slice(0, 10).map(d => `<div class="visit-item">🕐 ${d}</div>`).join('') + '</div>';
+  } else {
+    html += '<div style="font-size:12px;color:var(--text3);text-align:center;padding:8px">来店記録なし</div>';
+  }
+  html += '</div>';
+
+  document.getElementById('detailContent').innerHTML = html;
+  showModal('detailModal');
+}
+
+// === 回数券追加 ===
+function showAddTicket(cid) {
+  selectedCustomerCid = cid;
+  selectedTicketType = null;
+  const c = DATA.customers.find(c => c.cid === cid);
+  document.getElementById('ticketForName').textContent = c ? `${c.name} さんに回数券を追加` : '';
+  document.getElementById('ticketTypes').innerHTML = [4, 8, 16, 24, 48].map(n =>
+    `<div class="ticket-type-btn" onclick="selectTicketType(this,${n})" data-type="${n}">${n}<span>回券</span></div>`
+  ).join('');
+  document.getElementById('ticketAddBtn').disabled = true;
+  showModal('ticketModal');
+}
+
+function selectTicketType(el, type) {
+  selectedTicketType = type;
+  document.querySelectorAll('.ticket-type-btn').forEach(b => b.classList.remove('selected'));
+  el.classList.add('selected');
+  document.getElementById('ticketAddBtn').disabled = false;
+}
+
+async function addTicket() {
+  if (!selectedTicketType || !selectedCustomerCid) return;
+  const res = await api('/api/ticket', 'POST', { cid: selectedCustomerCid, type: selectedTicketType });
+  if (res.error) return alert(res.error);
+  closeModal('ticketModal');
+  await load();
+  showDetail(selectedCustomerCid);
+}
+
+// === 回数券利用 ===
+async function useTicket(cid, tid) {
+  if (!confirm('1回分を消化しますか？')) return;
+  const res = await api('/api/use', 'POST', { cid, tid });
+  if (res.error) return alert(res.error);
+  await load();
+  showDetail(cid);
+}
+
+// === 回数券削除 ===
+async function deleteTicket(cid, tid) {
+  if (!confirm('この回数券を削除しますか？')) return;
+  const res = await api('/api/ticket/delete', 'POST', { cid, tid });
+  if (res.error) return alert(res.error);
+  await load();
+  showDetail(cid);
+}
+
+// === 顧客編集 ===
+async function editCustomer(cid) {
+  const c = DATA.customers.find(c => c.cid === cid);
+  if (!c) return;
+  const name = prompt('お名前', c.name);
+  if (name === null) return;
+  const phone = prompt('電話番号', c.phone || '');
+  if (phone === null) return;
+  const memo = prompt('メモ', c.memo || '');
+  if (memo === null) return;
+  const res = await api('/api/customer/update', 'POST', { cid, name, phone, memo });
+  if (res.error) return alert(res.error);
+  await load();
+  showDetail(cid);
+}
+
+// === 顧客削除 ===
+async function deleteCustomer(cid) {
+  if (!confirm('この顧客を削除しますか？（回数券も全て削除されます）')) return;
+  const res = await api('/api/customer/delete', 'POST', { cid });
+  if (res.error) return alert(res.error);
+  closeModal('detailModal');
+  await load();
+}
+
+// === モーダル制御 ===
+function showModal(id) { document.getElementById(id).classList.add('show'); }
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+
+// === ユーティリティ ===
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+// === 検索イベント ===
+document.getElementById('searchInput').addEventListener('input', () => {
+  currentFilter = null;
+  document.getElementById('alertDrawer').classList.remove('show');
+  renderCustomerList();
+});
+
+// === 起動 ===
+load();
+</script>
+</body>
+</html>
