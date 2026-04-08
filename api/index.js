@@ -13,6 +13,34 @@ const PASSCODE_KEY = 'bcare:passcode';
 const DATA_KEY = 'bcare:data';
 const SETTINGS_KEY = 'bcare:settings';
 const SESSION_PREFIX = 'bcare:session:';
+const LINE_FRIENDS_KEY = 'bcare:line_friends'; // LINE友だち一覧
+
+// LINE Messaging API設定
+const LINE_API = 'https://api.line.me/v2/bot';
+const LINE_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN || '';
+const LINE_SECRET = process.env.LINE_CHANNEL_SECRET || '';
+
+// LINEメッセージ送信
+async function sendLineMessage(userId, messages) {
+  if (!LINE_TOKEN) return { error: 'LINE未設定' };
+  const r = await fetch(`${LINE_API}/message/push`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${LINE_TOKEN}` },
+    body: JSON.stringify({ to: userId, messages }),
+  });
+  return r.ok ? { status: 'ok' } : { error: await r.text() };
+}
+
+// LINE友だち一覧の取得・保存
+async function getLineFriends() {
+  const data = await redis.get(LINE_FRIENDS_KEY);
+  if (!data) return [];
+  if (typeof data === 'string') return JSON.parse(data);
+  return data;
+}
+async function saveLineFriends(friends) {
+  await redis.set(LINE_FRIENDS_KEY, JSON.stringify(friends));
+}
 
 // デフォルト設定
 const DEFAULT_SETTINGS = {
@@ -358,6 +386,81 @@ module.exports = async (req, res) => {
       if (!newPass || newPass.length < 2) return res.status(400).json({ error: '2文字以上' });
       await redis.set(PASSCODE_KEY, newPass);
       return res.status(200).json({ status: 'ok' });
+    }
+
+    // === LINE Webhook (認証不要) ===
+    if (pathname === '/api/line/webhook' && req.method === 'POST') {
+      const events = body.events || [];
+      const friends = await getLineFriends();
+      for (const ev of events) {
+        if (ev.type === 'follow') {
+          // 友だち追加
+          const userId = ev.source?.userId;
+          if (userId && !friends.find(f => f.userId === userId)) {
+            // プロフィール取得
+            let displayName = '';
+            try {
+              const pr = await fetch(`${LINE_API}/profile/${userId}`, {
+                headers: { 'Authorization': `Bearer ${LINE_TOKEN}` },
+              });
+              if (pr.ok) {
+                const pj = await pr.json();
+                displayName = pj.displayName || '';
+              }
+            } catch(e) {}
+            friends.push({ userId, displayName, followedAt: new Date().toISOString(), linked: '' });
+            await saveLineFriends(friends);
+            // ウェルカムメッセージ
+            await sendLineMessage(userId, [{ type: 'text', text: 'B-careへようこそ！\n回数券の有効期限やお得な情報をお届けします💆' }]);
+          }
+        } else if (ev.type === 'unfollow') {
+          // ブロック
+          const userId = ev.source?.userId;
+          const idx = friends.findIndex(f => f.userId === userId);
+          if (idx !== -1) {
+            friends.splice(idx, 1);
+            await saveLineFriends(friends);
+          }
+        }
+      }
+      return res.status(200).json({ status: 'ok' });
+    }
+
+    // === LINE Webhook検証 (GET) ===
+    if (pathname === '/api/line/webhook' && req.method === 'GET') {
+      return res.status(200).json({ status: 'ok', message: 'Webhook is active' });
+    }
+
+    // === LINE友だち一覧取得 ===
+    if (pathname === '/api/line/friends' && req.method === 'GET') {
+      if (!(await validateSession(req))) return res.status(401).json({ error: '認証必要' });
+      const friends = await getLineFriends();
+      return res.status(200).json({ friends });
+    }
+
+    // === LINE友だちと顧客をリンク ===
+    if (pathname === '/api/line/link' && req.method === 'POST') {
+      if (!(await validateSession(req))) return res.status(401).json({ error: '認証必要' });
+      const friends = await getLineFriends();
+      const f = friends.find(f => f.userId === body.lineUserId);
+      if (!f) return res.status(404).json({ error: 'LINE友だちが見つかりません' });
+      f.linked = body.cid || '';
+      await saveLineFriends(friends);
+      return res.status(200).json({ status: 'ok' });
+    }
+
+    // === LINEテストメッセージ送信 ===
+    if (pathname === '/api/line/send-test' && req.method === 'POST') {
+      if (!(await validateSession(req))) return res.status(401).json({ error: '認証必要' });
+      const friends = await getLineFriends();
+      if (!friends.length) return res.status(400).json({ error: 'LINE友だちがいません' });
+      const msg = body.message || 'B-careからのテストメッセージです';
+      const results = [];
+      for (const f of friends) {
+        const r = await sendLineMessage(f.userId, [{ type: 'text', text: msg }]);
+        results.push({ userId: f.userId, displayName: f.displayName, ...r });
+      }
+      return res.status(200).json({ status: 'ok', results });
     }
 
     return res.status(404).json({ error: 'Not found' });
