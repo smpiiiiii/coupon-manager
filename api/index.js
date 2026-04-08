@@ -95,6 +95,37 @@ module.exports = async (req, res) => {
   const body = req.body || {};
 
   try {
+    // === LINE Webhook (最優先・認証不要) ===
+    if (pathname === '/api/line/webhook') {
+      if (req.method === 'GET') return res.status(200).json({ status: 'ok', message: 'Webhook is active' });
+      if (req.method === 'POST') {
+        const events = body.events || [];
+        const friends = await getLineFriends();
+        for (const ev of events) {
+          if (ev.type === 'follow') {
+            const userId = ev.source?.userId;
+            if (userId && !friends.find(f => f.userId === userId)) {
+              let displayName = '';
+              try {
+                const pr = await fetch(`${LINE_API}/profile/${userId}`, {
+                  headers: { 'Authorization': `Bearer ${LINE_TOKEN}` },
+                });
+                if (pr.ok) { const pj = await pr.json(); displayName = pj.displayName || ''; }
+              } catch(e) {}
+              friends.push({ userId, displayName, followedAt: new Date().toISOString(), linked: '' });
+              await saveLineFriends(friends);
+              await sendLineMessage(userId, [{ type: 'text', text: 'B-careへようこそ！\n回数券の有効期限やお得な情報をお届けします💆' }]);
+            }
+          } else if (ev.type === 'unfollow') {
+            const userId = ev.source?.userId;
+            const idx = friends.findIndex(f => f.userId === userId);
+            if (idx !== -1) { friends.splice(idx, 1); await saveLineFriends(friends); }
+          }
+        }
+        return res.status(200).json({ status: 'ok' });
+      }
+    }
+
     // === ログイン ===
     if (pathname === '/api/login' && req.method === 'POST') {
       const currentPasscode = await getPasscode();
@@ -386,49 +417,6 @@ module.exports = async (req, res) => {
       if (!newPass || newPass.length < 2) return res.status(400).json({ error: '2文字以上' });
       await redis.set(PASSCODE_KEY, newPass);
       return res.status(200).json({ status: 'ok' });
-    }
-
-    // === LINE Webhook (認証不要) ===
-    if (pathname === '/api/line/webhook' && req.method === 'POST') {
-      const events = body.events || [];
-      const friends = await getLineFriends();
-      for (const ev of events) {
-        if (ev.type === 'follow') {
-          // 友だち追加
-          const userId = ev.source?.userId;
-          if (userId && !friends.find(f => f.userId === userId)) {
-            // プロフィール取得
-            let displayName = '';
-            try {
-              const pr = await fetch(`${LINE_API}/profile/${userId}`, {
-                headers: { 'Authorization': `Bearer ${LINE_TOKEN}` },
-              });
-              if (pr.ok) {
-                const pj = await pr.json();
-                displayName = pj.displayName || '';
-              }
-            } catch(e) {}
-            friends.push({ userId, displayName, followedAt: new Date().toISOString(), linked: '' });
-            await saveLineFriends(friends);
-            // ウェルカムメッセージ
-            await sendLineMessage(userId, [{ type: 'text', text: 'B-careへようこそ！\n回数券の有効期限やお得な情報をお届けします💆' }]);
-          }
-        } else if (ev.type === 'unfollow') {
-          // ブロック
-          const userId = ev.source?.userId;
-          const idx = friends.findIndex(f => f.userId === userId);
-          if (idx !== -1) {
-            friends.splice(idx, 1);
-            await saveLineFriends(friends);
-          }
-        }
-      }
-      return res.status(200).json({ status: 'ok' });
-    }
-
-    // === LINE Webhook検証 (GET) ===
-    if (pathname === '/api/line/webhook' && req.method === 'GET') {
-      return res.status(200).json({ status: 'ok', message: 'Webhook is active' });
     }
 
     // === LINE友だち一覧取得 ===
