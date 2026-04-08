@@ -318,6 +318,25 @@ module.exports = async (req, res) => {
       return res.status(200).json({ status: 'ok', added: added.length, errors });
     }
 
+    // === 顧客一括削除（全件 or 選択） ===
+    if (pathname === '/api/customer/bulk-delete' && req.method === 'POST') {
+      const data = await getData();
+      const cids = body.cids || []; // 空配列なら全件削除
+      if (cids.length === 0) {
+        // 全件削除
+        const count = data.customers.length;
+        data.customers = [];
+        await saveData(data);
+        return res.status(200).json({ status: 'ok', deleted: count });
+      }
+      // 選択削除
+      const before = data.customers.length;
+      data.customers = data.customers.filter(c => !cids.includes(c.cid));
+      const deleted = before - data.customers.length;
+      await saveData(data);
+      return res.status(200).json({ status: 'ok', deleted });
+    }
+
     // === パスコード変更 ===
     if (pathname === '/api/change-passcode' && req.method === 'POST') {
       const currentPasscode = await getPasscode();

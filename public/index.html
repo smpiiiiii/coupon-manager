@@ -262,8 +262,45 @@ function renderHome(area){
   const t=D.customers.length;const act=D.customers.reduce((s,c)=>s+c.tickets.filter(t=>t.remaining>0).length,0);
   const dorm=(a.month1?.length||0)+(a.month3?.length||0)+(a.month6?.length||0);
   const stats=`<div class="stats"><div class="stat"><div class="num">${t}</div><div class="lbl">総顧客</div></div><div class="stat"><div class="num" style="color:var(--green)">${act}</div><div class="lbl">有効券</div></div><div class="stat"><div class="num" style="color:${dorm?'var(--orange)':'var(--green)'}">${dorm}</div><div class="lbl">休眠</div></div></div>`;
-  area.innerHTML=alerts+stats+`<div class="toolbar"><input type="text" id="searchInput" placeholder="🔍 顧客を検索..." oninput="renderCustomerList()"><button class="btn-add" onclick="openAddCustomer()">＋ 新規</button></div><div class="c-list" id="customerList"></div>`;
+  area.innerHTML=alerts+stats+`<div class="toolbar"><input type="text" id="searchInput" placeholder="🔍 顧客を検索..." oninput="renderCustomerList()"><button class="btn-add" style="background:${selectMode?'linear-gradient(135deg,var(--red),#dc2626)':'linear-gradient(135deg,#64748b,#475569)'};font-size:11px;padding:10px 10px" onclick="toggleSelectMode()">${selectMode?'✕ 解除':'☑ 選択'}</button><button class="btn-add" onclick="openAddCustomer()">＋ 新規</button></div><div id="selectBar" style="display:${selectMode?'flex':'none'};gap:6px;margin-bottom:10px;align-items:center;flex-wrap:wrap"><button style="padding:6px 12px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--accent);font-size:11px;font-weight:700;cursor:pointer" onclick="selectAll()">全選択</button><button style="padding:6px 12px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text3);font-size:11px;font-weight:700;cursor:pointer" onclick="deselectAll()">全解除</button><span id="selectCount" style="font-size:11px;color:var(--text2);flex:1">0件選択中</span><button style="padding:6px 12px;background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3);border-radius:8px;color:var(--red);font-size:11px;font-weight:700;cursor:pointer" onclick="deleteSelected()">🗑 選択削除</button><button style="padding:6px 12px;background:rgba(239,68,68,.25);border:1px solid rgba(239,68,68,.4);border-radius:8px;color:var(--red);font-size:11px;font-weight:700;cursor:pointer" onclick="deleteAll()">⚠ 全件削除</button></div><div class="c-list" id="customerList"></div>`;
   renderCustomerList();
+}
+
+let selectMode=false;
+let selectedCids=new Set();
+
+function toggleSelectMode(){
+  selectMode=!selectMode;
+  if(!selectMode)selectedCids.clear();
+  renderTab();
+}
+function selectAll(){
+  const q=(document.getElementById('searchInput')?.value||'').toLowerCase();
+  let cs=D.customers;
+  if(q)cs=cs.filter(c=>c.name.toLowerCase().includes(q)||(c.phone||'').includes(q));
+  cs.forEach(c=>selectedCids.add(c.cid));
+  renderCustomerList();
+}
+function deselectAll(){selectedCids.clear();renderCustomerList();}
+function toggleSelect(cid){if(selectedCids.has(cid))selectedCids.delete(cid);else selectedCids.add(cid);renderCustomerList();}
+function updateSelectCount(){
+  const el=document.getElementById('selectCount');
+  if(el)el.textContent=selectedCids.size+'件選択中';
+}
+async function deleteSelected(){
+  if(!selectedCids.size){alert('顧客を選択してください');return;}
+  if(!confirm(selectedCids.size+'件の顧客を削除しますか？\n（この操作は取り消せません）'))return;
+  const r=await api('/api/customer/bulk-delete','POST',{cids:[...selectedCids]});
+  if(r.error){alert(r.error);return;}
+  alert(r.deleted+'件削除しました');selectMode=false;selectedCids.clear();await load();
+}
+async function deleteAll(){
+  if(!D.customers.length){alert('顧客がいません');return;}
+  if(!confirm('全'+D.customers.length+'件の顧客データを削除しますか？\n⚠ この操作は取り消せません！'))return;
+  if(!confirm('本当に全件削除しますか？\nもう一度確認してください'))return;
+  const r=await api('/api/customer/bulk-delete','POST',{cids:[]});
+  if(r.error){alert(r.error);return;}
+  alert(r.deleted+'件削除しました');selectMode=false;selectedCids.clear();await load();
 }
 
 function renderCustomerList(){
@@ -280,8 +317,11 @@ function renderCustomerList(){
     const at=c.tickets.filter(t=>t.remaining>0);
     const chips=at.length?at.map(t=>`<span class="chip">${t.type}回券 残${t.remaining}</span>`).join(''):'<span class="chip empty">回数券なし</span>';
     let extra='';if(c.nextAppointment)extra+=`<span class="chip" style="background:rgba(34,197,94,.1);color:var(--green);border-color:rgba(34,197,94,.2)">📅 ${c.nextAppointment}</span>`;
-    return`<div class="c-card" onclick="openDetail('${c.cid}')"><div class="c-top"><span class="c-name">${esc(c.name)}</span><span class="c-badge ${bc}">${bt}</span></div><div class="c-meta">${c.phone?'📞'+esc(c.phone):''}${c.lastVisit?' ・ 最終:'+c.lastVisit:''}</div><div class="c-chips">${chips}${extra}</div></div>`;
+    const checked=selectedCids.has(c.cid);
+    const checkbox=selectMode?`<div style="display:flex;align-items:center;padding-right:10px;flex-shrink:0" onclick="event.stopPropagation();toggleSelect('${c.cid}')"><div style="width:22px;height:22px;border-radius:6px;border:2px solid ${checked?'var(--accent)':'var(--border)'};background:${checked?'var(--accent)':'transparent'};display:flex;align-items:center;justify-content:center;font-size:14px;color:#fff;transition:all .15s">${checked?'✓':''}</div></div>`:'';
+    return`<div class="c-card" style="display:flex;align-items:stretch" onclick="${selectMode?`toggleSelect('${c.cid}')`:`openDetail('${c.cid}')`}">${checkbox}<div style="flex:1;min-width:0"><div class="c-top"><span class="c-name">${esc(c.name)}</span><span class="c-badge ${bc}">${bt}</span></div><div class="c-meta">${c.phone?'📞'+esc(c.phone):''}${c.lastVisit?' ・ 最終:'+c.lastVisit:''}</div><div class="c-chips">${chips}${extra}</div></div></div>`;
   }).join('');
+  updateSelectCount();
 }
 
 // ===== アラートタブ =====
