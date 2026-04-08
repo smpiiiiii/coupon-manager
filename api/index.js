@@ -114,12 +114,63 @@ module.exports = async (req, res) => {
               } catch(e) {}
               friends.push({ userId, displayName, followedAt: new Date().toISOString(), linked: '' });
               await saveLineFriends(friends);
-              await sendLineMessage(userId, [{ type: 'text', text: 'B-careへようこそ！\n回数券の有効期限やお得な情報をお届けします💆' }]);
+              await sendLineMessage(userId, [{ type: 'text', text: 'B-careへようこそ！\n回数券の有効期限やお得な情報をお届けします💆\n\n「残り」と送ると回数券の残数を確認できます📋' }]);
             }
           } else if (ev.type === 'unfollow') {
             const userId = ev.source?.userId;
             const idx = friends.findIndex(f => f.userId === userId);
             if (idx !== -1) { friends.splice(idx, 1); await saveLineFriends(friends); }
+          } else if (ev.type === 'message' && ev.message?.type === 'text') {
+            // テキストメッセージ自動応答
+            const userId = ev.source?.userId;
+            const text = (ev.message.text || '').trim();
+            const friend = friends.find(f => f.userId === userId);
+            
+            if (!friend || !friend.linked) {
+              // 未リンクの場合
+              if (text.match(/残り|回数|予約|チケット/)) {
+                await sendLineMessage(userId, [{ type: 'text', text: 'まだお客様情報とリンクされていません。\nスタッフにお声がけください🙏' }]);
+              }
+              continue;
+            }
+            
+            // リンク済み顧客のデータを取得
+            const data = await getData();
+            const customer = data.customers.find(c => c.cid === friend.linked);
+            if (!customer) continue;
+            const settings = await getSettings();
+            
+            if (text.match(/残り|回数|チケット|券/)) {
+              // 回数券残数を返信
+              const activeTickets = customer.tickets.filter(t => t.remaining > 0);
+              if (!activeTickets.length) {
+                await sendLineMessage(userId, [{ type: 'text', text: `${customer.name}様\n\n現在有効な回数券はございません。\nまたのご利用をお待ちしております🙏` }]);
+              } else {
+                let msg = `${customer.name}様の回数券情報📋\n━━━━━━━━━━\n`;
+                activeTickets.forEach(t => {
+                  let expInfo = '';
+                  if (settings.expiryMonths > 0) {
+                    const exp = new Date(t.purchasedAt);
+                    exp.setMonth(exp.getMonth() + settings.expiryMonths);
+                    const dl = Math.floor((exp - Date.now()) / 864e5);
+                    expInfo = dl > 0 ? `（期限: ${exp.toISOString().split('T')[0]} あと${dl}日）` : '（期限切れ）';
+                  }
+                  msg += `\n🎫 ${t.type}回券\n   残り ${t.remaining}回 / ${t.type}回 ${expInfo}\n`;
+                });
+                msg += '\n━━━━━━━━━━\nB-care 💆';
+                await sendLineMessage(userId, [{ type: 'text', text: msg }]);
+              }
+            } else if (text.match(/予約|次回|いつ/)) {
+              // 次回予約を返信
+              const appt = customer.nextAppointment;
+              if (appt) {
+                await sendLineMessage(userId, [{ type: 'text', text: `${customer.name}様\n\n📅 次回ご予約: ${appt}\n\nお待ちしております✨\n━━━━━━━━━━\nB-care` }]);
+              } else {
+                await sendLineMessage(userId, [{ type: 'text', text: `${customer.name}様\n\n現在ご予約は入っておりません。\nご都合の良い日時をお知らせください📅\n━━━━━━━━━━\nB-care` }]);
+              }
+            } else if (text.match(/メニュー|できること|ヘルプ|help/i)) {
+              await sendLineMessage(userId, [{ type: 'text', text: `B-care LINE メニュー📋\n━━━━━━━━━━\n\n「残り」→ 回数券の残数確認\n「予約」→ 次回予約の確認\n「メニュー」→ このメニュー表示\n\n━━━━━━━━━━\nB-care 💆` }]);
+            }
           }
         }
         return res.status(200).json({ status: 'ok' });
