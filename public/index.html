@@ -111,6 +111,7 @@ body{font-family:'Noto Sans JP','Inter',sans-serif;background:var(--bg);color:va
     <input type="password" class="login-input" id="passcodeInput" placeholder="パスコード" maxlength="20" autocomplete="off">
     <div class="login-error" id="loginError"></div>
     <button class="login-btn" onclick="doLogin()">ログイン</button>
+    <button id="installBtnLogin" class="login-btn" style="display:none;margin-top:8px;background:linear-gradient(135deg,#a78bfa,#7c3aed)" onclick="doInstall()">📲 アプリをインストール</button>
   </div>
   <div id="mainApp" style="display:none">
     <div class="header-bar"><h1>💆 B-care</h1><div class="sub">COUPON TICKET MANAGER</div></div>
@@ -356,8 +357,9 @@ function renderSettings(area){
     <div class="settings-item" onclick="exportCsv('visits')"><span class="s-label">📥 来店履歴CSV</span><span class="s-value">DL</span></div>
     <div class="settings-item" onclick="openPassConfig()"><span class="s-label">🔑 パスコード変更</span><span class="s-value">→</span></div>
     <div class="settings-item" onclick="logout()"><span class="s-label">🚪 ログアウト</span><span class="s-value"></span></div>
+    ${deferredPrompt?'<div class="settings-item" onclick="doInstall()"><span class="s-label">📲 アプリをインストール</span><span class="s-value">→</span></div>':''}
     <div class="settings-item"><span class="s-label">📊 顧客数</span><span class="s-value">${D.customers.length}名</span></div>
-    <div class="settings-item"><span class="s-label">📱 バージョン</span><span class="s-value">2.0.0</span></div>`;
+    <div class="settings-item"><span class="s-label">📱 バージョン</span><span class="s-value">2.1.0</span></div>`;
 }
 
 function updateAlertBadge(){
@@ -651,6 +653,32 @@ document.getElementById('csvData')?.addEventListener('input',previewCsv);
 function openModal(n){document.getElementById(n+'Overlay').classList.add('show');document.getElementById(n+'Modal').classList.add('show');}
 function closeModal(n){document.getElementById(n+'Overlay').classList.remove('show');document.getElementById(n+'Modal').classList.remove('show');}
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+
+// PWAインストールプロンプト
+let deferredPrompt=null;
+window.addEventListener('beforeinstallprompt',e=>{
+  e.preventDefault();
+  deferredPrompt=e;
+  // インストールボタンを表示
+  const btn=document.getElementById('installBtnLogin');
+  if(btn)btn.style.display='block';
+});
+window.addEventListener('appinstalled',()=>{
+  deferredPrompt=null;
+  const btn=document.getElementById('installBtnLogin');
+  if(btn)btn.style.display='none';
+});
+function doInstall(){
+  if(!deferredPrompt)return;
+  deferredPrompt.prompt();
+  deferredPrompt.userChoice.then(r=>{
+    if(r.outcome==='accepted'){
+      const btn=document.getElementById('installBtnLogin');
+      if(btn)btn.style.display='none';
+    }
+    deferredPrompt=null;
+  });
+}
 
 if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
 checkAuth();
