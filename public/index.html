@@ -174,10 +174,20 @@ body{font-family:'Noto Sans JP','Inter',sans-serif;background:var(--bg);color:va
   <div class="modal-body">
     <div style="font-size:11px;color:var(--text3);margin-bottom:12px;line-height:1.6">
       形式: <b>名前, 電話番号, メモ, 誕生日</b>（1行1顧客）<br>
+      ヘッダー行があれば自動でカラムを判別します<br>
       <code style="font-size:10px;color:var(--accent);background:var(--card);padding:4px 8px;border-radius:4px;display:block;margin-top:4px">田中花子,090-1234-5678,肩こり,1990-05-15</code>
     </div>
     <div class="fg"><label>データ貼り付け（CSV/TSV）</label><textarea id="csvData" style="height:140px;font-size:11px;font-family:monospace" placeholder="名前,電話番号,メモ,誕生日"></textarea></div>
-    <div style="margin-bottom:12px"><label style="display:block;text-align:center;padding:10px;background:var(--card);border:1px dashed var(--border);border-radius:10px;cursor:pointer;font-size:12px;color:var(--text2);font-weight:700">📁 CSVファイルを選択<input type="file" id="csvFile" accept=".csv,.tsv,.txt" style="display:none" onchange="loadCsvFile(this)"></label></div>
+    <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
+      <label style="flex:1;display:block;text-align:center;padding:10px;background:var(--card);border:1px dashed var(--border);border-radius:10px;cursor:pointer;font-size:12px;color:var(--text2);font-weight:700">📁 CSVファイルを選択<input type="file" id="csvFile" accept=".csv,.tsv,.txt" style="display:none" onchange="loadCsvFile(this)"></label>
+      <select id="csvEncoding" style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 8px;color:var(--text);font-size:11px;min-width:100px" onchange="reloadCsvWithEncoding()">
+        <option value="auto">自動判定</option>
+        <option value="UTF-8">UTF-8</option>
+        <option value="Shift_JIS">Shift_JIS</option>
+        <option value="EUC-JP">EUC-JP</option>
+      </select>
+    </div>
+    <div id="csvEncodingInfo" style="font-size:10px;color:var(--accent);margin-bottom:8px"></div>
     <div id="csvPreview" style="margin-bottom:12px"></div>
     <div id="csvError" style="color:var(--red);font-size:11px;margin-bottom:8px"></div>
     <button class="btn-primary" onclick="doCsvImport()">インポート実行</button>
@@ -485,31 +495,152 @@ async function deleteCustomer(cid){if(!confirm('削除しますか？'))return;a
 function logout(){if(!confirm('ログアウト？'))return;authToken='';localStorage.removeItem('bcare_token');showLogin();}
 
 // CSV
-function openCsvImport(){document.getElementById('csvData').value='';document.getElementById('csvPreview').innerHTML='';document.getElementById('csvError').textContent='';openModal('csv');}
+function openCsvImport(){document.getElementById('csvData').value='';document.getElementById('csvPreview').innerHTML='';document.getElementById('csvError').textContent='';document.getElementById('csvEncodingInfo').textContent='';document.getElementById('csvEncoding').value='auto';csvLastFile=null;openModal('csv');}
+
+// 最後に読み込んだファイルを保持（エンコーディング変更時の再読み込み用）
+let csvLastFile=null;
+
+// エンコーディング自動判定（ArrayBufferからバイトパターンを解析）
+function detectEncoding(buffer){
+  const bytes=new Uint8Array(buffer);
+  // BOM検出
+  if(bytes.length>=3&&bytes[0]===0xEF&&bytes[1]===0xBB&&bytes[2]===0xBF)return{enc:'UTF-8',reason:'BOM検出(UTF-8)'};
+  if(bytes.length>=2&&bytes[0]===0xFF&&bytes[1]===0xFE)return{enc:'UTF-16LE',reason:'BOM検出(UTF-16LE)'};
+  // バイトパターン解析
+  let sjisScore=0,utf8Score=0,eucScore=0,asciiOnly=true;
+  for(let i=0;i<bytes.length;i++){
+    const b=bytes[i];
+    if(b>0x7F)asciiOnly=false;
+    // Shift_JIS/CP932: 第1バイト 0x81-0x9F, 0xE0-0xFC
+    if((b>=0x81&&b<=0x9F)||(b>=0xE0&&b<=0xFC)){
+      if(i+1<bytes.length){
+        const b2=bytes[i+1];
+        if((b2>=0x40&&b2<=0x7E)||(b2>=0x80&&b2<=0xFC)){sjisScore+=2;i++;continue;}
+      }
+    }
+    // 半角カナ (Shift_JIS): 0xA1-0xDF
+    if(b>=0xA1&&b<=0xDF)sjisScore++;
+    // UTF-8 マルチバイト: 110xxxxx 10xxxxxx
+    if((b&0xE0)===0xC0&&i+1<bytes.length&&(bytes[i+1]&0xC0)===0x80){utf8Score+=2;i++;continue;}
+    // UTF-8 3バイト: 1110xxxx 10xxxxxx 10xxxxxx
+    if((b&0xF0)===0xE0&&i+2<bytes.length&&(bytes[i+1]&0xC0)===0x80&&(bytes[i+2]&0xC0)===0x80){utf8Score+=3;i+=2;continue;}
+    // EUC-JP: 0xA1-0xFE 0xA1-0xFE
+    if(b>=0xA1&&b<=0xFE&&i+1<bytes.length&&bytes[i+1]>=0xA1&&bytes[i+1]<=0xFE){eucScore+=2;i++;continue;}
+  }
+  if(asciiOnly)return{enc:'UTF-8',reason:'ASCII'};
+  // スコア判定
+  if(utf8Score>sjisScore&&utf8Score>eucScore)return{enc:'UTF-8',reason:`UTF-8(スコア:${utf8Score})`};
+  if(sjisScore>utf8Score&&sjisScore>eucScore)return{enc:'Shift_JIS',reason:`Shift_JIS(スコア:${sjisScore})`};
+  if(eucScore>0)return{enc:'EUC-JP',reason:`EUC-JP(スコア:${eucScore})`};
+  return{enc:'Shift_JIS',reason:'デフォルト(Shift_JIS)'};
+}
+
 function loadCsvFile(input){const f=input.files[0];if(!f)return;
-  // まずUTF-8で読み、文字化けしたらShift_JISで再読み込み
+  csvLastFile=f;
+  const selectedEnc=document.getElementById('csvEncoding').value;
+  if(selectedEnc!=='auto'){
+    // 手動指定
+    const r=new FileReader();
+    r.onload=e=>{document.getElementById('csvData').value=e.target.result;document.getElementById('csvEncodingInfo').textContent='📄 '+selectedEnc+'で読み込みました';previewCsv();};
+    r.readAsText(f,selectedEnc);
+    return;
+  }
+  // 自動判定: ArrayBufferで読み込んでバイトパターンを解析
   const r=new FileReader();
   r.onload=e=>{
-    const text=e.target.result;
-    // U+FFFD（置換文字）が含まれていたらShift_JISの可能性が高い
-    if(text.includes('\uFFFD')){
-      const r2=new FileReader();
-      r2.onload=e2=>{document.getElementById('csvData').value=e2.target.result;previewCsv();};
-      r2.readAsText(f,'Shift_JIS');
-    }else{
+    const det=detectEncoding(e.target.result);
+    document.getElementById('csvEncodingInfo').textContent='📄 エンコーディング自動判定: '+det.reason;
+    const r2=new FileReader();
+    r2.onload=e2=>{
+      let text=e2.target.result;
+      // BOM除去
+      if(text.charCodeAt(0)===0xFEFF)text=text.substring(1);
+      // 文字化けチェック（U+FFFDが多ければSJISでリトライ）
+      if(det.enc==='UTF-8'&&(text.match(/\uFFFD/g)||[]).length>2){
+        document.getElementById('csvEncodingInfo').textContent='📄 UTF-8で文字化け検出→Shift_JISでリトライ';
+        const r3=new FileReader();
+        r3.onload=e3=>{document.getElementById('csvData').value=e3.target.result;previewCsv();};
+        r3.readAsText(f,'Shift_JIS');
+        return;
+      }
       document.getElementById('csvData').value=text;previewCsv();
-    }
+    };
+    r2.readAsText(f,det.enc);
   };
-  r.readAsText(f,'UTF-8');
+  r.readAsArrayBuffer(f);
 }
-function parseCsvData(){const raw=document.getElementById('csvData').value.trim();if(!raw)return[];const lines=raw.split(/\r?\n/).filter(l=>l.trim());let start=0;if(lines.length>0&&/^(名前|name|お名前)/i.test(lines[0].split(/[,\t]/)[0].trim()))start=1;
-  return lines.slice(start).map(l=>{const c=l.split(/[,\t]/);return{name:(c[0]||'').trim(),phone:(c[1]||'').trim(),memo:(c[2]||'').trim(),birthday:(c[3]||'').trim()};});}
+
+// エンコーディング変更時に再読み込み
+function reloadCsvWithEncoding(){
+  if(!csvLastFile)return;
+  loadCsvFile({files:[csvLastFile]});
+}
+
+// CSVヘッダーのカラム名マッピング
+const csvHeaderMap={
+  '名前':'name','お名前':'name','氏名':'name','顧客名':'name','name':'name','姓名':'name','フルネーム':'name','お客様名':'name',
+  '電話':'phone','電話番号':'phone','tel':'phone','phone':'phone','携帯':'phone','携帯番号':'phone','連絡先':'phone',
+  'メモ':'memo','備考':'memo','memo':'memo','note':'memo','notes':'memo','コメント':'memo','症状':'memo','主訴':'memo',
+  '誕生日':'birthday','生年月日':'birthday','birthday':'birthday','birth':'birthday','dob':'birthday',
+  'メール':'email','email':'email','mail':'email','メールアドレス':'email',
+};
+
+function parseCsvData(){
+  const raw=document.getElementById('csvData').value.trim();
+  if(!raw)return[];
+  const lines=raw.split(/\r?\n/).filter(l=>l.trim());
+  if(!lines.length)return[];
+  // ダブルクォート対応のCSVパース
+  function parseLine(line){
+    const row=[];let inQ=false,field='';
+    for(let i=0;i<line.length;i++){
+      const ch=line[i];
+      if(inQ){if(ch==='"'&&i+1<line.length&&line[i+1]==='"'){field+='"';i++;}else if(ch==='"'){inQ=false;}else{field+=ch;}}
+      else{if(ch==='"'){inQ=true;}else if(ch===','||ch==='\t'){row.push(field.trim());field='';}else{field+=ch;}}
+    }
+    row.push(field.trim());
+    return row;
+  }
+  // ヘッダー行の検出
+  const firstRow=parseLine(lines[0]);
+  let colMap=null,start=0;
+  // ヘッダー判定: 2列以上がマッピングに一致したらヘッダー行
+  let hitCount=0;
+  const tempMap={};
+  firstRow.forEach((cell,idx)=>{
+    const key=cell.toLowerCase().replace(/[\s_]/g,'');
+    if(csvHeaderMap[key]||csvHeaderMap[cell]){hitCount++;tempMap[idx]=csvHeaderMap[key]||csvHeaderMap[cell];}
+  });
+  if(hitCount>=2){colMap=tempMap;start=1;}
+  else{
+    // デフォルト列順: 名前, 電話, メモ, 誕生日
+    colMap={0:'name',1:'phone',2:'memo',3:'birthday'};
+  }
+  // データ行をパース
+  const items=[];
+  for(let i=start;i<lines.length;i++){
+    const row=parseLine(lines[i]);
+    if(row.length===1&&!row[0])continue;
+    const item={name:'',phone:'',memo:'',birthday:''};
+    for(const idx in colMap){
+      const field=colMap[idx];
+      const val=row[idx]||'';
+      if(field==='email'){item.memo=item.memo?(item.memo+' / '+val):val;}
+      else if(item[field]!==undefined){item[field]=val;}
+    }
+    if(item.name)items.push(item);
+  }
+  return items;
+}
+
 function previewCsv(){const items=parseCsvData();if(!items.length){document.getElementById('csvPreview').innerHTML='';return;}
-  let h=`<div style="font-size:11px;color:var(--text2);margin-bottom:4px">${items.length}件：</div><div style="max-height:100px;overflow-y:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:6px">`;
-  items.slice(0,15).forEach(it=>{h+=`<div style="font-size:10px;padding:2px 0;border-bottom:1px solid var(--border)"><b>${esc(it.name)}</b>${it.phone?' ・'+esc(it.phone):''}${it.birthday?' 🎂'+it.birthday:''}</div>`;});
-  if(items.length>15)h+=`<div style="font-size:9px;color:var(--text3)">...他${items.length-15}件</div>`;
+  let h=`<div style="font-size:11px;color:var(--text2);margin-bottom:4px">${items.length}件：</div><div style="max-height:160px;overflow-y:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:6px">`;
+  items.slice(0,20).forEach(it=>{h+=`<div style="font-size:10px;padding:3px 0;border-bottom:1px solid var(--border)"><b>${esc(it.name)}</b>${it.phone?' ・📞'+esc(it.phone):''}${it.memo?' ・📝'+esc(it.memo.substring(0,20)):''}${it.birthday?' 🎂'+it.birthday:''}</div>`;});
+  if(items.length>20)h+=`<div style="font-size:9px;color:var(--text3)">...他${items.length-20}件</div>`;
   document.getElementById('csvPreview').innerHTML=h+'</div>';}
-async function doCsvImport(){const items=parseCsvData();if(!items.length)return;
+
+async function doCsvImport(){const items=parseCsvData();if(!items.length){document.getElementById('csvError').textContent='インポートするデータがありません';return;}
+  if(!confirm(items.length+'件をインポートしますか？'))return;
   const r=await api('/api/bulk-import','POST',{items});
   if(r.error){document.getElementById('csvError').textContent=r.error;return;}
   let msg=`${r.added}件登録！`;if(r.errors?.length)msg+=`\n${r.errors.length}件スキップ`;
