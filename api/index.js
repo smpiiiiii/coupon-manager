@@ -451,6 +451,64 @@ module.exports = async (req, res) => {
       return res.status(200).json({ status: 'ok', results });
     }
 
+    // === 休眠顧客リマインド送信 ===
+    if (pathname === '/api/line/send-dormant' && req.method === 'POST') {
+      if (!(await validateSession(req))) return res.status(401).json({ error: '認証必要' });
+      const data = await getData();
+      const friends = await getLineFriends();
+      const now = Date.now();
+      let sent = 0;
+      for (const c of data.customers) {
+        if (!c.lastVisit) continue;
+        const diff = Math.floor((now - new Date(c.lastVisit).getTime()) / 864e5);
+        if (diff < 90) continue; // 3ヶ月以上
+        const friend = friends.find(f => f.linked === c.cid);
+        if (!friend) continue;
+        const msg = `${c.name}様、ご無沙汰しております💆\n\nしばらくお身体のメンテナンスはされていますか？\n前回のご来店から${diff}日が経ちました。\n\nお身体のお疲れが溜まっていませんか？\nぜひお気軽にご予約ください✨\n\n━━━━━━━━━━\nB-care`;
+        const r = await sendLineMessage(friend.userId, [{ type: 'text', text: msg }]);
+        if (r.status === 'ok') sent++;
+      }
+      return res.status(200).json({ status: 'ok', sent });
+    }
+
+    // === 期限切れ通知送信 ===
+    if (pathname === '/api/line/send-expiry' && req.method === 'POST') {
+      if (!(await validateSession(req))) return res.status(401).json({ error: '認証必要' });
+      const data = await getData();
+      const friends = await getLineFriends();
+      const settings = await getSettings();
+      const expiryMonths = settings.expiryMonths || 12;
+      if (expiryMonths <= 0) return res.status(400).json({ error: '有効期限が未設定です' });
+      let sent = 0;
+      for (const c of data.customers) {
+        const friend = friends.find(f => f.linked === c.cid);
+        if (!friend) continue;
+        for (const t of c.tickets) {
+          if (t.remaining <= 0) continue;
+          const exp = new Date(t.purchasedAt);
+          exp.setMonth(exp.getMonth() + expiryMonths);
+          const daysLeft = Math.floor((exp - Date.now()) / 864e5);
+          if (daysLeft > 30 || daysLeft < 0) continue; // 30日以内のみ
+          const msg = `${c.name}様、回数券の期限が近づいています⏰\n\n${t.type}回券の有効期限まであと${daysLeft}日です。\n残り${t.remaining}回ございます。\n\n期限前にぜひご利用ください💆\n\n━━━━━━━━━━\nB-care`;
+          const r = await sendLineMessage(friend.userId, [{ type: 'text', text: msg }]);
+          if (r.status === 'ok') sent++;
+          break; // 1顧客1通まで
+        }
+      }
+      return res.status(200).json({ status: 'ok', sent });
+    }
+
+    // === 個別LINE送信 ===
+    if (pathname === '/api/line/send-individual' && req.method === 'POST') {
+      if (!(await validateSession(req))) return res.status(401).json({ error: '認証必要' });
+      const friends = await getLineFriends();
+      const friend = friends.find(f => f.linked === body.cid);
+      if (!friend) return res.status(400).json({ error: 'この顧客はLINEとリンクされていません。\n設定 > LINE友だち一覧でリンクしてください' });
+      const r = await sendLineMessage(friend.userId, [{ type: 'text', text: body.message || '' }]);
+      if (r.error) return res.status(500).json({ error: '送信失敗: ' + r.error });
+      return res.status(200).json({ status: 'ok' });
+    }
+
     return res.status(404).json({ error: 'Not found' });
   } catch (err) {
     console.error('API Error:', err);

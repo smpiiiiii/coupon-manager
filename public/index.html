@@ -399,7 +399,17 @@ function renderSettings(area){
     <div class="settings-item" onclick="logout()"><span class="s-label">🚪 ログアウト</span><span class="s-value"></span></div>
     ${deferredPrompt?'<div class="settings-item" onclick="doInstall()"><span class="s-label">📲 アプリをインストール</span><span class="s-value">→</span></div>':''}
     <div class="settings-item"><span class="s-label">📊 顧客数</span><span class="s-value">${D.customers.length}名</span></div>
-    <div class="settings-item"><span class="s-label">📱 バージョン</span><span class="s-value">2.1.0</span></div>`;
+    <div class="settings-item"><span class="s-label">📱 バージョン</span><span class="s-value">3.0.0</span></div>
+    <div class="sec-title" style="margin-top:20px">📨 LINE連携</div>
+    <div class="settings-item" onclick="openLineFriends()"><span class="s-label">👥 LINE友だち一覧</span><span class="s-value" id="lineFriendCount">-</span></div>
+    <div class="settings-item" onclick="openLineMessage()"><span class="s-label">✉️ 一斉メッセージ送信</span><span class="s-value">→</span></div>
+    <div class="settings-item" onclick="sendDormantReminder()"><span class="s-label">💤 休眠顧客リマインド</span><span class="s-value">→</span></div>
+    <div class="settings-item" onclick="sendExpiryNotice()"><span class="s-label">⏰ 期限切れ通知</span><span class="s-value">→</span></div>`;
+  // LINE友だち数を非同期で取得
+  api('/api/line/friends').then(r=>{
+    const el=document.getElementById('lineFriendCount');
+    if(el)el.textContent=(r.friends?.length||0)+'名';
+  }).catch(()=>{});
 }
 
 function updateAlertBadge(){
@@ -480,7 +490,7 @@ function openDetail(cid){
   // 次回予約
   h+=`<div class="fg" style="margin-bottom:12px"><label>📅 次回予約日</label><input type="date" value="${c.nextAppointment||''}" onchange="updateAppt('${cid}',this.value)" style="font-size:13px"></div>`;
   // ボタン
-  h+=`<div style="display:flex;gap:6px;margin-bottom:14px"><button style="flex:1;padding:10px;background:var(--card);border:1px solid var(--border);border-radius:10px;color:var(--text2);font-size:11px;cursor:pointer;font-weight:700" onclick="editCustomer('${cid}')">✏️ 編集</button><button style="flex:1;padding:10px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.15);border-radius:10px;color:var(--red);font-size:11px;cursor:pointer;font-weight:700" onclick="deleteCustomer('${cid}')">🗑 削除</button></div>`;
+  h+=`<div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap"><button style="flex:1;padding:10px;background:var(--card);border:1px solid var(--border);border-radius:10px;color:var(--text2);font-size:11px;cursor:pointer;font-weight:700" onclick="editCustomer('${cid}')">✏️ 編集</button><button style="flex:1;padding:10px;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.15);border-radius:10px;color:var(--green);font-size:11px;cursor:pointer;font-weight:700" onclick="openLineSendTo('${cid}')">💬 LINE送信</button><button style="flex:1;padding:10px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.15);border-radius:10px;color:var(--red);font-size:11px;cursor:pointer;font-weight:700" onclick="deleteCustomer('${cid}')">🗑 削除</button></div>`;
   // 有効回数券
   h+=`<div class="sec-title">🎫 有効な回数券 <button style="margin-left:auto;padding:4px 10px;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;border:none;border-radius:6px;font-size:9px;font-weight:700;cursor:pointer" onclick="openTicketAdd('${cid}')">＋ 追加</button></div>`;
   if(at.length){at.forEach(t=>{
@@ -711,6 +721,117 @@ document.getElementById('csvData')?.addEventListener('input',previewCsv);
 function openModal(n){document.getElementById(n+'Overlay').classList.add('show');document.getElementById(n+'Modal').classList.add('show');}
 function closeModal(n){document.getElementById(n+'Overlay').classList.remove('show');document.getElementById(n+'Modal').classList.remove('show');}
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+
+// ===== LINE連携機能 =====
+// LINE友だち一覧
+async function openLineFriends(){
+  document.getElementById('configTitle').textContent='\ud83d\udc65 LINE\u53cb\u3060\u3061\u4e00\u89a7';
+  document.getElementById('configBody').innerHTML='<div style="text-align:center;padding:20px;color:var(--text3)">\u8aad\u307f\u8fbc\u307f\u4e2d...</div>';
+  openModal('config');
+  const r=await api('/api/line/friends');
+  const friends=r.friends||[];
+  if(!friends.length){document.getElementById('configBody').innerHTML='<div style="text-align:center;padding:20px;color:var(--text3)">LINE\u53cb\u3060\u3061\u304c\u3044\u307e\u305b\u3093<br><span style="font-size:10px">\u304a\u5ba2\u69d8\u306bB-care LINE\u3092\u53cb\u3060\u3061\u8ffd\u52a0\u3057\u3066\u3082\u3089\u3044\u307e\u3057\u3087\u3046</span></div>';return;}
+  let h=`<div style="font-size:11px;color:var(--text2);margin-bottom:8px">${friends.length}\u540d\u306eLINE\u53cb\u3060\u3061</div>`;
+  friends.forEach(f=>{
+    const linked=f.linked?D.customers.find(c=>c.cid===f.linked):null;
+    const linkName=linked?`\u2705 ${esc(linked.name)}`:'<span style="color:var(--orange)">\u672a\u30ea\u30f3\u30af</span>';
+    h+=`<div style="padding:10px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:6px">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <div><b style="font-size:13px">${esc(f.displayName||'\u540d\u79f0\u306a\u3057')}</b><div style="font-size:10px;color:var(--text3)">\u8ffd\u52a0: ${f.followedAt?.split('T')[0]||'-'}</div></div>
+        <div style="font-size:10px">${linkName}</div>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:6px">
+        <select id="link_${f.userId.replace(/[^a-zA-Z0-9]/g,'')}" style="flex:1;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:10px">
+          <option value="">\u9867\u5ba2\u3092\u9078\u629e...</option>
+          ${D.customers.map(c=>`<option value="${c.cid}" ${f.linked===c.cid?'selected':''}>${esc(c.name)}</option>`).join('')}
+        </select>
+        <button style="padding:6px 10px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:10px;cursor:pointer" onclick="linkLineFriend('${f.userId}')">\u30ea\u30f3\u30af</button>
+      </div>
+    </div>`;
+  });
+  document.getElementById('configBody').innerHTML=h;
+}
+async function linkLineFriend(userId){
+  const sel=document.getElementById('link_'+userId.replace(/[^a-zA-Z0-9]/g,''));
+  const cid=sel?.value||'';
+  const r=await api('/api/line/link','POST',{lineUserId:userId,cid});
+  if(r.error){alert(r.error);return;}
+  alert('\u30ea\u30f3\u30af\u3057\u307e\u3057\u305f');openLineFriends();
+}
+
+// 一斉メッセージ送信
+function openLineMessage(){
+  document.getElementById('configTitle').textContent='\u2709\ufe0f \u4e00\u6589\u30e1\u30c3\u30bb\u30fc\u30b8\u9001\u4fe1';
+  document.getElementById('configBody').innerHTML=`
+    <div class="fg"><label>\u30e1\u30c3\u30bb\u30fc\u30b8\u5185\u5bb9</label><textarea id="lineMsg" style="height:100px" placeholder="\u304a\u5ba2\u69d8\u3078\u306e\u30e1\u30c3\u30bb\u30fc\u30b8\u3092\u5165\u529b..."></textarea></div>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:8px">\u203b LINE\u53cb\u3060\u3061\u5168\u54e1\u306b\u9001\u4fe1\u3055\u308c\u307e\u3059\uff08\u7121\u6599\u30d7\u30e9\u30f3: \u6708200\u901a\u307e\u3067\uff09</div>
+    <div id="lineSendResult"></div>
+    <button class="btn-primary" onclick="sendLineAll()">\ud83d\udce8 \u5168\u54e1\u306b\u9001\u4fe1</button>`;
+  openModal('config');
+}
+async function sendLineAll(){
+  const msg=document.getElementById('lineMsg').value.trim();
+  if(!msg){alert('\u30e1\u30c3\u30bb\u30fc\u30b8\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044');return;}
+  if(!confirm('\u5168LINE\u53cb\u3060\u3061\u306b\u9001\u4fe1\u3057\u307e\u3059\u304b\uff1f'))return;
+  document.getElementById('lineSendResult').innerHTML='<div style="color:var(--accent);font-size:11px">\u9001\u4fe1\u4e2d...</div>';
+  const r=await api('/api/line/send-test','POST',{message:msg});
+  if(r.error){document.getElementById('lineSendResult').innerHTML=`<div style="color:var(--red);font-size:11px">${r.error}</div>`;return;}
+  const ok=r.results?.filter(x=>x.status==='ok').length||0;
+  document.getElementById('lineSendResult').innerHTML=`<div style="color:var(--green);font-size:11px">\u2705 ${ok}\u540d\u306b\u9001\u4fe1\u5b8c\u4e86</div>`;
+}
+
+// 休眠顧客リマインド
+async function sendDormantReminder(){
+  const a=D.alerts||{};
+  const dormant=[...(a.month3||[]),...(a.month6||[])];
+  if(!dormant.length){alert('\u4f11\u7720\u9867\u5ba2\u304c\u3044\u307e\u305b\u3093');return;}
+  // LINE\u30ea\u30f3\u30af\u6e08\u307f\u306e\u4f11\u7720\u9867\u5ba2\u3092\u7279\u5b9a
+  const friends=(await api('/api/line/friends')).friends||[];
+  const linkedDormant=dormant.filter(c=>friends.find(f=>f.linked===c.cid));
+  if(!linkedDormant.length){
+    alert(`\u4f11\u7720\u9867\u5ba2${dormant.length}\u540d\u304c\u3044\u307e\u3059\u304c\u3001LINE\u30ea\u30f3\u30af\u6e08\u307f\u304c0\u540d\u3067\u3059\u3002\n\u8a2d\u5b9a > LINE\u53cb\u3060\u3061\u4e00\u89a7 \u3067\u9867\u5ba2\u3068\u30ea\u30f3\u30af\u3057\u3066\u304f\u3060\u3055\u3044`);
+    return;
+  }
+  if(!confirm(`${linkedDormant.length}\u540d\u306e\u4f11\u7720\u9867\u5ba2\u306bLINE\u30ea\u30de\u30a4\u30f3\u30c9\u3092\u9001\u4fe1\u3057\u307e\u3059\u304b\uff1f`))return;
+  const r=await api('/api/line/send-dormant','POST',{});
+  if(r.error){alert(r.error);return;}
+  alert(`\u2705 ${r.sent||0}\u540d\u306b\u30ea\u30de\u30a4\u30f3\u30c9\u9001\u4fe1\u3057\u307e\u3057\u305f`);
+}
+
+// 期限切れ通知
+async function sendExpiryNotice(){
+  const a=D.alerts||{};
+  const expiring=a.expiring||[];
+  if(!expiring.length){alert('\u671f\u9650\u5207\u308c\u9593\u8fd1\u306e\u56de\u6570\u5238\u306f\u3042\u308a\u307e\u305b\u3093');return;}
+  const friends=(await api('/api/line/friends')).friends||[];
+  const linkedExp=expiring.filter(c=>friends.find(f=>f.linked===c.cid));
+  if(!linkedExp.length){
+    alert(`\u671f\u9650\u5207\u308c\u9593\u8fd1${expiring.length}\u4ef6\u3042\u308a\u307e\u3059\u304c\u3001LINE\u30ea\u30f3\u30af\u6e08\u307f\u304c0\u4ef6\u3067\u3059`);
+    return;
+  }
+  if(!confirm(`${linkedExp.length}\u540d\u306b\u671f\u9650\u5207\u308c\u901a\u77e5\u3092\u9001\u4fe1\u3057\u307e\u3059\u304b\uff1f`))return;
+  const r=await api('/api/line/send-expiry','POST',{});
+  if(r.error){alert(r.error);return;}
+  alert(`\u2705 ${r.sent||0}\u540d\u306b\u671f\u9650\u901a\u77e5\u3092\u9001\u4fe1\u3057\u307e\u3057\u305f`);
+}
+
+// 個別LINE送信
+function openLineSendTo(cid){
+  const c=D.customers.find(c=>c.cid===cid);if(!c)return;
+  document.getElementById('configTitle').textContent=`\ud83d\udcac ${c.name}\u3055\u3093\u306bLINE\u9001\u4fe1`;
+  document.getElementById('configBody').innerHTML=`
+    <div class="fg"><label>\u30e1\u30c3\u30bb\u30fc\u30b8</label><textarea id="lineIndMsg" style="height:100px" placeholder="${c.name}\u3055\u3093\u3078\u306e\u30e1\u30c3\u30bb\u30fc\u30b8..."></textarea></div>
+    <div id="lineIndResult"></div>
+    <button class="btn-primary" onclick="sendLineIndividual('${cid}')">\ud83d\udce8 \u9001\u4fe1</button>`;
+  openModal('config');
+}
+async function sendLineIndividual(cid){
+  const msg=document.getElementById('lineIndMsg').value.trim();
+  if(!msg){alert('\u30e1\u30c3\u30bb\u30fc\u30b8\u3092\u5165\u529b');return;}
+  const r=await api('/api/line/send-individual','POST',{cid,message:msg});
+  if(r.error){document.getElementById('lineIndResult').innerHTML=`<div style="color:var(--red);font-size:11px">${r.error}</div>`;return;}
+  document.getElementById('lineIndResult').innerHTML='<div style="color:var(--green);font-size:11px">\u2705 \u9001\u4fe1\u3057\u307e\u3057\u305f</div>';
+}
 
 // PWAインストールプロンプト
 let deferredPrompt=null;
