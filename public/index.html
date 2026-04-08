@@ -486,7 +486,22 @@ function logout(){if(!confirm('ログアウト？'))return;authToken='';localSto
 
 // CSV
 function openCsvImport(){document.getElementById('csvData').value='';document.getElementById('csvPreview').innerHTML='';document.getElementById('csvError').textContent='';openModal('csv');}
-function loadCsvFile(input){const f=input.files[0];if(!f)return;const r=new FileReader();r.onload=e=>{document.getElementById('csvData').value=e.target.result;previewCsv();};r.readAsText(f,'UTF-8');}
+function loadCsvFile(input){const f=input.files[0];if(!f)return;
+  // まずUTF-8で読み、文字化けしたらShift_JISで再読み込み
+  const r=new FileReader();
+  r.onload=e=>{
+    const text=e.target.result;
+    // U+FFFD（置換文字）が含まれていたらShift_JISの可能性が高い
+    if(text.includes('\uFFFD')){
+      const r2=new FileReader();
+      r2.onload=e2=>{document.getElementById('csvData').value=e2.target.result;previewCsv();};
+      r2.readAsText(f,'Shift_JIS');
+    }else{
+      document.getElementById('csvData').value=text;previewCsv();
+    }
+  };
+  r.readAsText(f,'UTF-8');
+}
 function parseCsvData(){const raw=document.getElementById('csvData').value.trim();if(!raw)return[];const lines=raw.split(/\r?\n/).filter(l=>l.trim());let start=0;if(lines.length>0&&/^(名前|name|お名前)/i.test(lines[0].split(/[,\t]/)[0].trim()))start=1;
   return lines.slice(start).map(l=>{const c=l.split(/[,\t]/);return{name:(c[0]||'').trim(),phone:(c[1]||'').trim(),memo:(c[2]||'').trim(),birthday:(c[3]||'').trim()};});}
 function previewCsv(){const items=parseCsvData();if(!items.length){document.getElementById('csvPreview').innerHTML='';return;}
