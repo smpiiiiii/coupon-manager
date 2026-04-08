@@ -625,6 +625,13 @@ const csvHeaderMap={
   'メモ':'memo','備考':'memo','memo':'memo','note':'memo','notes':'memo','コメント':'memo','症状':'memo','主訴':'memo',
   '誕生日':'birthday','生年月日':'birthday','birthday':'birthday','birth':'birthday','dob':'birthday',
   'メール':'email','email':'email','mail':'email','メールアドレス':'email',
+  // 回数券関連
+  '会員番号':'memberId','会員no':'memberId','会員ＮＯ':'memberId','memberid':'memberId',
+  'ﾁｹｯﾄ設定回数':'ticketTotal','チケット設定回数':'ticketTotal','設定回数':'ticketTotal','回数':'ticketTotal',
+  'ﾁｹｯﾄ残回数':'ticketRemain','チケット残回数':'ticketRemain','残回数':'ticketRemain','残り':'ticketRemain',
+  'ﾁｹｯﾄ消化回数':'ticketUsed','チケット消化回数':'ticketUsed','消化回数':'ticketUsed',
+  '最終消化日':'lastVisit','最終来店日':'lastVisit','最終来店':'lastVisit','最終利用日':'lastVisit',
+  '設定金額':'totalPrice','金額':'totalPrice','消化金額':'usedPrice','役務残':'remainPrice',
 };
 
 function parseCsvData(){
@@ -646,16 +653,15 @@ function parseCsvData(){
   // ヘッダー行の検出
   const firstRow=parseLine(lines[0]);
   let colMap=null,start=0;
-  // ヘッダー判定: 2列以上がマッピングに一致したらヘッダー行
   let hitCount=0;
   const tempMap={};
   firstRow.forEach((cell,idx)=>{
-    const key=cell.toLowerCase().replace(/[\s_]/g,'');
+    // 半角カナ→全角カナ変換してからマッチ
+    const key=cell.replace(/[\s_]/g,'');
     if(csvHeaderMap[key]||csvHeaderMap[cell]){hitCount++;tempMap[idx]=csvHeaderMap[key]||csvHeaderMap[cell];}
   });
   if(hitCount>=2){colMap=tempMap;start=1;}
   else{
-    // デフォルト列順: 名前, 電話, メモ, 誕生日
     colMap={0:'name',1:'phone',2:'memo',3:'birthday'};
   }
   // データ行をパース
@@ -663,21 +669,31 @@ function parseCsvData(){
   for(let i=start;i<lines.length;i++){
     const row=parseLine(lines[i]);
     if(row.length===1&&!row[0])continue;
-    const item={name:'',phone:'',memo:'',birthday:''};
+    const item={name:'',phone:'',memo:'',birthday:'',memberId:'',ticketTotal:0,ticketRemain:0,ticketUsed:0,lastVisit:'',totalPrice:0};
     for(const idx in colMap){
       const field=colMap[idx];
       const val=row[idx]||'';
       if(field==='email'){item.memo=item.memo?(item.memo+' / '+val):val;}
+      else if(field==='ticketTotal'){item.ticketTotal=parseInt(val.replace(/,/g,''))||0;}
+      else if(field==='ticketRemain'){item.ticketRemain=parseInt(val.replace(/,/g,''))||0;}
+      else if(field==='ticketUsed'){item.ticketUsed=parseInt(val.replace(/,/g,''))||0;}
+      else if(field==='totalPrice'){item.totalPrice=parseInt(val.replace(/,/g,''))||0;}
+      else if(field==='usedPrice'||field==='remainPrice'){/* 情報として無視でOK */}
+      else if(field==='memberId'){item.memberId=val;}
+      else if(field==='lastVisit'){item.lastVisit=val;}
       else if(item[field]!==undefined){item[field]=val;}
     }
+    // 会員番号をメモに追加
+    if(item.memberId){item.memo=item.memo?('会員:'+item.memberId+' / '+item.memo):('会員:'+item.memberId);}
     if(item.name)items.push(item);
   }
   return items;
 }
 
 function previewCsv(){const items=parseCsvData();if(!items.length){document.getElementById('csvPreview').innerHTML='';return;}
-  let h=`<div style="font-size:11px;color:var(--text2);margin-bottom:4px">${items.length}件：</div><div style="max-height:160px;overflow-y:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:6px">`;
-  items.slice(0,20).forEach(it=>{h+=`<div style="font-size:10px;padding:3px 0;border-bottom:1px solid var(--border)"><b>${esc(it.name)}</b>${it.phone?' ・📞'+esc(it.phone):''}${it.memo?' ・📝'+esc(it.memo.substring(0,20)):''}${it.birthday?' 🎂'+it.birthday:''}</div>`;});
+  const hasTicket=items.some(it=>it.ticketTotal>0);
+  let h=`<div style="font-size:11px;color:var(--text2);margin-bottom:4px">${items.length}件${hasTicket?' 🎫回数券データ含む':''}：</div><div style="max-height:160px;overflow-y:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:6px">`;
+  items.slice(0,20).forEach(it=>{h+=`<div style="font-size:10px;padding:3px 0;border-bottom:1px solid var(--border)"><b>${esc(it.name)}</b>${it.phone?' ・📞'+esc(it.phone):''}${it.ticketTotal?' ・🎫'+it.ticketTotal+'回(残'+it.ticketRemain+')':''}${it.lastVisit?' ・🕐'+it.lastVisit:''}${it.memo&&!it.memberId?' ・📝'+esc(it.memo.substring(0,15)):''}</div>`;});
   if(items.length>20)h+=`<div style="font-size:9px;color:var(--text3)">...他${items.length-20}件</div>`;
   document.getElementById('csvPreview').innerHTML=h+'</div>';}
 

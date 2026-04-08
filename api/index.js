@@ -309,8 +309,21 @@ module.exports = async (req, res) => {
           cid: crypto.randomBytes(4).toString('hex'), name,
           phone: (items[i].phone || '').trim(), memo: (items[i].memo || '').trim(),
           birthday: (items[i].birthday || '').trim(), nextAppointment: '',
-          tickets: [], lastVisit: null, createdAt: new Date().toISOString(),
+          tickets: [], lastVisit: (items[i].lastVisit || '').trim() || null,
+          createdAt: new Date().toISOString(),
         };
+        // 回数券データがあれば自動作成
+        const ticketTotal = parseInt(items[i].ticketTotal) || 0;
+        const ticketRemain = parseInt(items[i].ticketRemain) || 0;
+        if (ticketTotal > 0) {
+          customer.tickets.push({
+            tid: crypto.randomBytes(4).toString('hex'),
+            type: ticketTotal,
+            remaining: ticketRemain,
+            purchasedAt: customer.lastVisit || new Date().toISOString().split('T')[0],
+            usageLog: [],
+          });
+        }
         data.customers.push(customer);
         added.push(customer);
       }
