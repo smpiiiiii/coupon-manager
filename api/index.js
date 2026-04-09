@@ -115,6 +115,23 @@ module.exports = async (req, res) => {
   const body = req.body || {};
 
   try {
+    // === 一時リセット（デプロイ後に削除する） ===
+    if (pathname === '/api/one-time-reset' && req.method === 'GET') {
+      const roomId = 'b68e0817';
+      const data = await getRoomData(roomId);
+      if (data) {
+        data.customers = [];
+        data.lineConfig = { channelAccessToken: '', channelSecret: '' };
+        await saveRoomData(roomId, data);
+      }
+      await redis.del(`cp:${roomId}:line_friends`);
+      // 旧データも削除
+      for (const k of ['bcare:data','bcare:settings','bcare:line_friends','bcare:tokens','bcare:passcode']) {
+        try { await redis.del(k); } catch(e) {}
+      }
+      return res.status(200).json({ status: 'ok', message: 'Room b68e0817 reset complete' });
+    }
+
     // ===========================
     // ルーム管理（認証不要）
     // ===========================
