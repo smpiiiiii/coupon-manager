@@ -318,8 +318,17 @@ module.exports = async (req, res) => {
       return res.status(200).json({
         name: data.name, admin: data.admin, role: session.role,
         customers: data.customers, settings, alerts,
-        hasLine: !!(data.lineConfig?.channelAccessToken),
+        hasLine: !!(data.lineConfig?.channelAccessToken || process.env.LINE_CHANNEL_ACCESS_TOKEN),
       });
+    }
+
+    // LINE設定が無い場合、環境変数から自動取り込み（初回アクセス時）
+    if (!data.lineConfig?.channelAccessToken && process.env.LINE_CHANNEL_ACCESS_TOKEN) {
+      data.lineConfig = {
+        channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
+        channelSecret: process.env.LINE_CHANNEL_SECRET || '',
+      };
+      await saveRoomData(roomId, data);
     }
 
     // === 顧客追加 ===
