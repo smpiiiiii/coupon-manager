@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="B-care">
+<meta name="apple-mobile-web-app-title" content="回数券管理">
 <meta name="theme-color" content="#0a0e1a">
 <link rel="manifest" href="/manifest.json">
 <link rel="apple-touch-icon" href="/icon-192.png">
-<title>B-care 回数券管理</title>
+<title>回数券管理SaaS</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&family=Noto+Sans+JP:wght@400;500;700;900&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -106,15 +106,26 @@ body{font-family:'Noto Sans JP','Inter',sans-serif;background:var(--bg);color:va
 </head>
 <body>
 <div class="app" id="app">
-  <div id="loginScreen" class="login-screen">
-    <div class="logo">💆</div><h1>B-care</h1><div class="sub">COUPON TICKET MANAGER</div>
+  <!-- トップ画面（未ログイン） -->
+  <div id="topScreen" class="login-screen">
+    <div class="logo">💆</div><h1>回数券管理</h1><div class="sub">COUPON TICKET MANAGER</div>
+    <div id="topHistory" style="width:100%;max-width:320px"></div>
+    <button class="login-btn" onclick="openCreateStore()" style="max-width:320px">＋ 新しい店舗を作成</button>
+    <button class="login-btn" onclick="openJoinStore()" style="max-width:320px;background:linear-gradient(135deg,#64748b,#475569)">🔗 URLで参加する</button>
+    <button id="installBtnLogin" class="login-btn" style="display:none;max-width:320px;margin-top:8px;background:linear-gradient(135deg,#a78bfa,#7c3aed)" onclick="doInstall()">📲 アプリをインストール</button>
+  </div>
+  <!-- 店舗ログイン画面 -->
+  <div id="loginScreen" class="login-screen" style="display:none">
+    <div class="logo">🔒</div><h1 id="loginStoreName">ログイン</h1><div class="sub" id="loginStoreSub">パスコードを入力してください</div>
+    <div class="fg" style="width:100%;max-width:280px"><label>あなたの名前</label><input id="loginUserName" placeholder="田中" style="text-align:center;font-size:16px" autocomplete="off"></div>
     <input type="password" class="login-input" id="passcodeInput" placeholder="パスコード" maxlength="20" autocomplete="off">
     <div class="login-error" id="loginError"></div>
     <button class="login-btn" onclick="doLogin()">ログイン</button>
-    <button id="installBtnLogin" class="login-btn" style="display:none;margin-top:8px;background:linear-gradient(135deg,#a78bfa,#7c3aed)" onclick="doInstall()">📲 アプリをインストール</button>
+    <button style="background:none;border:none;color:var(--text3);font-size:12px;margin-top:8px;cursor:pointer" onclick="backToTop()">← トップへ戻る</button>
   </div>
+  <!-- メインアプリ -->
   <div id="mainApp" style="display:none">
-    <div class="header-bar"><h1>💆 B-care</h1><div class="sub">COUPON TICKET MANAGER</div></div>
+    <div class="header-bar"><h1 id="storeTitle">💆 店舗名</h1><div class="sub" id="storeSub">COUPON TICKET MANAGER</div></div>
     <div class="scroll-area" id="scrollArea"></div>
     <div class="tab-bar">
       <div class="tab-item active" onclick="switchTab('home',this)"><span class="icon">🏠</span><span class="label">ホーム</span></div>
@@ -203,35 +214,153 @@ body{font-family:'Noto Sans JP','Inter',sans-serif;background:var(--bg);color:va
 </div>
 
 <script>
-let D={customers:[],alerts:{},settings:{}};
-let authToken=localStorage.getItem('bcare_token')||'';
+let D={customers:[],alerts:{},settings:{},name:'',role:'staff',hasLine:false};
+let authToken='';
+let roomId='';
+let myRole='staff';
 let selCid=null,selType=null,useCid=null,useTid=null,currentTab='home';
 
-async function api(p,m='GET',b=null){
+// デバイスID生成
+let deviceId=localStorage.getItem('cp_deviceId')||'';
+if(!deviceId){deviceId='dev_'+Math.random().toString(36).substr(2,9)+Date.now().toString(36);localStorage.setItem('cp_deviceId',deviceId);}
+
+// APIベースパス
+function apiBase(){return `/api/store/${roomId}`;}
+
+async function api(path,m='GET',b=null){
   const o={method:m,headers:{'Content-Type':'application/json','X-Auth-Token':authToken}};
   if(b)o.body=JSON.stringify(b);
-  const r=await fetch(p,o);
-  if(r.status===401){authToken='';localStorage.removeItem('bcare_token');showLogin();throw new Error('auth');}
+  const r=await fetch(path,o);
+  if(r.status===401){authToken='';localStorage.removeItem('cp_token_'+roomId);showLogin();throw new Error('auth');}
   return r.json();
 }
 
-// 認証
-async function checkAuth(){
-  if(!authToken){showLogin();return;}
-  try{const r=await api('/api/verify');r.valid?(showApp(),load()):showLogin();}catch{showLogin();}
+// 画面制御
+function showTop(){document.getElementById('topScreen').style.display='flex';document.getElementById('loginScreen').style.display='none';document.getElementById('mainApp').style.display='none';renderHistory();}
+function showLogin(){document.getElementById('topScreen').style.display='none';document.getElementById('loginScreen').style.display='flex';document.getElementById('mainApp').style.display='none';}
+function showApp(){document.getElementById('topScreen').style.display='none';document.getElementById('loginScreen').style.display='none';const m=document.getElementById('mainApp');m.style.display='flex';m.style.flexDirection='column';m.style.height='100%';}
+function backToTop(){roomId='';history.pushState(null,'','/');showTop();}
+
+// 店舗履歴管理
+function getHistory(){try{return JSON.parse(localStorage.getItem('cp_history')||'[]');}catch{return [];}}
+function addHistory(id,name){let h=getHistory();h=h.filter(x=>x.id!==id);h.unshift({id,name,lastAccess:new Date().toISOString()});if(h.length>10)h=h.slice(0,10);localStorage.setItem('cp_history',JSON.stringify(h));}
+function renderHistory(){
+  const h=getHistory();
+  const el=document.getElementById('topHistory');
+  if(!h.length){el.innerHTML='';return;}
+  el.innerHTML='<div style="font-size:11px;color:var(--text3);font-weight:700;margin-bottom:6px">📋 最近の店舗</div>'+h.map(x=>
+    `<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="enterStore('${x.id}')">
+      <div><div style="font-weight:700;font-size:14px">${esc(x.name)}</div><div style="font-size:9px;color:var(--text3)">${x.lastAccess?.split('T')[0]||''}</div></div>
+      <span style="color:var(--accent);font-size:12px">→</span></div>`
+  ).join('');
 }
-function showLogin(){document.getElementById('loginScreen').style.display='flex';document.getElementById('mainApp').style.display='none';}
-function showApp(){document.getElementById('loginScreen').style.display='none';const m=document.getElementById('mainApp');m.style.display='flex';m.style.flexDirection='column';m.style.height='100%';}
+
+// 店舗作成
+function openCreateStore(){
+  document.getElementById('configTitle').textContent='＋ 新しい店舗を作成';
+  document.getElementById('configBody').innerHTML=`
+    <div class="fg"><label>店舗名 *</label><input id="createName" placeholder="B-care / 〇〇整体院"></div>
+    <div class="fg"><label>あなたの名前（管理者）</label><input id="createAdmin" placeholder="田中"></div>
+    <div class="fg"><label>パスコード *（4文字以上・スタッフ共有用）</label><input id="createPass" type="password" placeholder="0000" minlength="4"></div>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:12px;line-height:1.6">⚠️ パスコードはスタッフ全員で共有します。<br>URLを知っている人だけがアクセスできます。</div>
+    <button class="btn-primary" onclick="createStore()">作成する</button>`;
+  openModal('config');
+}
+async function createStore(){
+  const name=document.getElementById('createName').value.trim();
+  const admin=document.getElementById('createAdmin').value.trim();
+  const pass=document.getElementById('createPass').value.trim();
+  if(!name){alert('店舗名を入力してください');return;}
+  if(!pass||pass.length<4){alert('パスコードは4文字以上');return;}
+  try{
+    const r=await fetch('/api/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,creator:admin,passcode:pass,deviceId})});
+    const j=await r.json();
+    if(j.error){alert(j.error);return;}
+    roomId=j.id;authToken=j.token;
+    localStorage.setItem('cp_token_'+roomId,authToken);
+    addHistory(roomId,name);
+    closeModal('config');
+    history.pushState(null,'','/store/'+roomId);
+    showApp();
+    document.getElementById('storeTitle').textContent='💆 '+name;
+    load();
+    // URL共有案内
+    setTimeout(()=>{alert('店舗を作成しました！\n\nスタッフには以下のURLとパスコードを共有してください:\n'+location.href);},500);
+  }catch{alert('通信エラー');}
+}
+
+// URL参加
+function openJoinStore(){
+  document.getElementById('configTitle').textContent='🔗 URLで参加';
+  document.getElementById('configBody').innerHTML=`
+    <div class="fg"><label>店舗ID（URLの末尾8文字）</label><input id="joinId" placeholder="例: a1b2c3d4" maxlength="8"></div>
+    <button class="btn-primary" onclick="checkAndJoin()">確認する</button>`;
+  openModal('config');
+}
+async function checkAndJoin(){
+  const id=document.getElementById('joinId').value.trim();
+  if(!id){alert('IDを入力');return;}
+  try{
+    const r=await fetch('/api/check-room',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({roomId:id})});
+    const j=await r.json();
+    if(j.error){alert('見つかりません');return;}
+    closeModal('config');
+    enterStore(id);
+  }catch{alert('通信エラー');}
+}
+
+// 店舗にアクセス
+function enterStore(id){
+  roomId=id;
+  history.pushState(null,'','/store/'+id);
+  // 保存済みトークンがあるか確認
+  authToken=localStorage.getItem('cp_token_'+id)||'';
+  if(authToken){tryLoadRoom();}
+  else{showLoginForRoom();}
+}
+function showLoginForRoom(){
+  // 店舗名をAPIで取得
+  fetch('/api/check-room',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({roomId})})
+  .then(r=>r.json()).then(j=>{
+    document.getElementById('loginStoreName').textContent=j.name||'ログイン';
+    document.getElementById('loginStoreSub').textContent='パスコードを入力してください';
+  }).catch(()=>{});
+  showLogin();
+}
+async function tryLoadRoom(){
+  try{D=await api(apiBase()+'/data');myRole=D.role||'staff';document.getElementById('storeTitle').textContent='💆 '+D.name;addHistory(roomId,D.name);showApp();renderTab();}
+  catch{authToken='';localStorage.removeItem('cp_token_'+roomId);showLoginForRoom();}
+}
+
+// ログイン
 async function doLogin(){
   const pc=document.getElementById('passcodeInput').value;
+  const userName=document.getElementById('loginUserName').value.trim();
   if(!pc){document.getElementById('loginError').textContent='パスコードを入力';return;}
-  try{const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({passcode:pc})});const j=await r.json();
-  if(j.error){document.getElementById('loginError').textContent=j.error;return;}authToken=j.token;localStorage.setItem('bcare_token',authToken);showApp();load();}catch{document.getElementById('loginError').textContent='通信エラー';}
+  try{
+    const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({roomId,passcode:pc,userName,deviceId})});
+    const j=await r.json();
+    if(j.error){document.getElementById('loginError').textContent=j.error;return;}
+    authToken=j.token;myRole=j.role||'staff';
+    localStorage.setItem('cp_token_'+roomId,authToken);
+    document.getElementById('storeTitle').textContent='💆 '+(j.name||'');
+    addHistory(roomId,j.name||'');
+    showApp();load();
+  }catch{document.getElementById('loginError').textContent='通信エラー';}
 }
 document.getElementById('passcodeInput').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
 
-// データ
-async function load(){try{D=await api('/api/data');renderTab();}catch(e){if(e.message!=='auth')console.error(e);}}
+// データ読み込み
+async function load(){try{D=await api(apiBase()+'/data');myRole=D.role||'staff';renderTab();}catch(e){if(e.message!=='auth')console.error(e);}}
+
+// ページ初期化
+function initPage(){
+  const path=location.pathname;
+  const m=path.match(/^\/store\/([a-f0-9]+)/);
+  if(m){roomId=m[1];authToken=localStorage.getItem('cp_token_'+roomId)||'';if(authToken){tryLoadRoom();}else{showLoginForRoom();}}
+  else{showTop();}
+}
+initPage();
 
 function switchTab(tab,el){currentTab=tab;document.querySelectorAll('.tab-item').forEach(t=>t.classList.remove('active'));el.classList.add('active');renderTab();}
 
@@ -290,7 +419,7 @@ function updateSelectCount(){
 async function deleteSelected(){
   if(!selectedCids.size){alert('顧客を選択してください');return;}
   if(!confirm(selectedCids.size+'件の顧客を削除しますか？\n（この操作は取り消せません）'))return;
-  const r=await api('/api/customer/bulk-delete','POST',{cids:[...selectedCids]});
+  const r=await api(apiBase()+'/customer/bulk-delete','POST',{cids:[...selectedCids]});
   if(r.error){alert(r.error);return;}
   alert(r.deleted+'件削除しました');selectMode=false;selectedCids.clear();await load();
 }
@@ -298,7 +427,7 @@ async function deleteAll(){
   if(!D.customers.length){alert('顧客がいません');return;}
   if(!confirm('全'+D.customers.length+'件の顧客データを削除しますか？\n⚠ この操作は取り消せません！'))return;
   if(!confirm('本当に全件削除しますか？\nもう一度確認してください'))return;
-  const r=await api('/api/customer/bulk-delete','POST',{cids:[]});
+  const r=await api(apiBase()+'/customer/bulk-delete','POST',{cids:[]});
   if(r.error){alert(r.error);return;}
   alert(r.deleted+'件削除しました');selectMode=false;selectedCids.clear();await load();
 }
@@ -357,7 +486,7 @@ function renderAlertTab(area){
 async function renderReport(area){
   area.innerHTML='<div style="text-align:center;padding:40px;color:var(--text3)"><div class="spinner" style="width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 10px"></div>読み込み中...</div>';
   try{
-    const r=await api('/api/report');
+    const r=await api(apiBase()+'/report');
     const m=r.monthly;const months=Object.keys(m).sort().slice(-6);
     if(!months.length){area.innerHTML='<div class="empty"><div class="e-icon">📊</div><p>まだデータがありません</p></div>';return;}
     const settings=D.settings||{};
@@ -387,29 +516,40 @@ async function renderReport(area){
 // ===== 設定タブ =====
 function renderSettings(area){
   const s=D.settings||{};
-  area.innerHTML=`
+  const isAdmin=myRole==='admin';
+  let h=`
     <div class="sec-title">⚙️ 設定</div>
     <div class="settings-item" onclick="openPriceConfig()"><span class="s-label">💰 回数券の金額設定</span><span class="s-value">→</span></div>
     <div class="settings-item" onclick="openExpiryConfig()"><span class="s-label">🔄 有効期限</span><span class="s-value">${s.expiryMonths||12}ヶ月</span></div>
     <div class="settings-item" onclick="openStaffConfig()"><span class="s-label">👥 スタッフ管理</span><span class="s-value">${(s.staffList||[]).length}名</span></div>
     <div class="settings-item" onclick="openCsvImport()"><span class="s-label">📤 CSVインポート</span><span class="s-value">→</span></div>
     <div class="settings-item" onclick="exportCsv('customers')"><span class="s-label">📥 顧客リストCSV</span><span class="s-value">DL</span></div>
-    <div class="settings-item" onclick="exportCsv('visits')"><span class="s-label">📥 来店履歴CSV</span><span class="s-value">DL</span></div>
+    <div class="settings-item" onclick="exportCsv('visits')"><span class="s-label">📥 来店履歴CSV</span><span class="s-value">DL</span></div>`;
+  // 管理者メニュー
+  if(isAdmin){h+=`
+    <div class="sec-title" style="margin-top:20px">🔒 管理者メニュー</div>
     <div class="settings-item" onclick="openPassConfig()"><span class="s-label">🔑 パスコード変更</span><span class="s-value">→</span></div>
-    <div class="settings-item" onclick="logout()"><span class="s-label">🚪 ログアウト</span><span class="s-value"></span></div>
-    ${deferredPrompt?'<div class="settings-item" onclick="doInstall()"><span class="s-label">📲 アプリをインストール</span><span class="s-value">→</span></div>':''}
-    <div class="settings-item"><span class="s-label">📊 顧客数</span><span class="s-value">${D.customers.length}名</span></div>
-    <div class="settings-item"><span class="s-label">📱 バージョン</span><span class="s-value">3.0.0</span></div>
+    <div class="settings-item" onclick="openMemberManage()"><span class="s-label">👥 メンバー管理</span><span class="s-value">→</span></div>
+    <div class="settings-item" onclick="openLineConfig()"><span class="s-label">📲 LINE連携設定</span><span class="s-value">${D.hasLine?'✅ 設定済':'未設定'}</span></div>`;}
+  // LINE機能（設定済みの場合）
+  if(D.hasLine){h+=`
     <div class="sec-title" style="margin-top:20px">📨 LINE連携</div>
     <div class="settings-item" onclick="openLineFriends()"><span class="s-label">👥 LINE友だち一覧</span><span class="s-value" id="lineFriendCount">-</span></div>
     <div class="settings-item" onclick="openLineMessage()"><span class="s-label">✉️ 一斉メッセージ送信</span><span class="s-value">→</span></div>
     <div class="settings-item" onclick="sendDormantReminder()"><span class="s-label">💤 休眠顧客リマインド</span><span class="s-value">→</span></div>
     <div class="settings-item" onclick="sendExpiryNotice()"><span class="s-label">⏰ 期限切れ通知</span><span class="s-value">→</span></div>`;
-  // LINE友だち数を非同期で取得
-  api('/api/line/friends').then(r=>{
-    const el=document.getElementById('lineFriendCount');
-    if(el)el.textContent=(r.friends?.length||0)+'名';
-  }).catch(()=>{});
+    // LINE友だち数を非同期で取得
+    setTimeout(()=>{api(apiBase()+'/line/friends').then(r=>{const el=document.getElementById('lineFriendCount');if(el)el.textContent=(r.friends?.length||0)+'名';}).catch(()=>{});},100);
+  }
+  h+=`
+    <div class="sec-title" style="margin-top:20px">📋 その他</div>
+    <div class="settings-item" onclick="shareStoreUrl()"><span class="s-label">📤 URLを共有</span><span class="s-value">→</span></div>
+    ${deferredPrompt?'<div class="settings-item" onclick="doInstall()"><span class="s-label">📲 アプリをインストール</span><span class="s-value">→</span></div>':''}
+    <div class="settings-item"><span class="s-label">📊 顧客数</span><span class="s-value">${D.customers.length}名</span></div>
+    <div class="settings-item"><span class="s-label">📱 バージョン</span><span class="s-value">3.0.0</span></div>
+    <div class="settings-item"><span class="s-label">🏷 ルームID</span><span class="s-value" style="font-family:monospace">${roomId}</span></div>
+    <div class="settings-item" onclick="logout()"><span class="s-label">🚪 ログアウト</span><span class="s-value"></span></div>`;
+  area.innerHTML=h;
 }
 
 function updateAlertBadge(){
@@ -429,7 +569,7 @@ function openPriceConfig(){
 }
 async function savePrices(){
   const p={};[4,8,16,24,48].forEach(n=>{p[n]=parseInt(document.getElementById('price_'+n).value)||0;});
-  await api('/api/settings','POST',{ticketPrices:p});alert('保存しました');closeModal('config');await load();
+  await api(apiBase()+'/settings','POST',{ticketPrices:p});alert('保存しました');closeModal('config');await load();
 }
 function openExpiryConfig(){
   const s=D.settings||{};
@@ -438,7 +578,7 @@ function openExpiryConfig(){
   openModal('config');
 }
 async function saveExpiry(){
-  await api('/api/settings','POST',{expiryMonths:parseInt(document.getElementById('expiryInput').value)||0});alert('保存しました');closeModal('config');await load();
+  await api(apiBase()+'/settings','POST',{expiryMonths:parseInt(document.getElementById('expiryInput').value)||0});alert('保存しました');closeModal('config');await load();
 }
 function openStaffConfig(){
   const s=D.settings||{};const list=s.staffList||[];
@@ -448,7 +588,7 @@ function openStaffConfig(){
 }
 async function saveStaff(){
   const list=document.getElementById('staffInput').value.split('\n').map(s=>s.trim()).filter(s=>s);
-  await api('/api/settings','POST',{staffList:list});alert('保存しました');closeModal('config');await load();
+  await api(apiBase()+'/settings','POST',{staffList:list});alert('保存しました');closeModal('config');await load();
 }
 function openPassConfig(){
   document.getElementById('configTitle').textContent='🔑 パスコード変更';
@@ -458,14 +598,14 @@ function openPassConfig(){
 async function changePass(){
   const c=document.getElementById('curPass').value,n=document.getElementById('newPass').value.trim();
   if(!c||!n){document.getElementById('passErr').textContent='入力してください';return;}
-  const r=await api('/api/change-passcode','POST',{current:c,newPasscode:n});
+  const r=await api(apiBase()+'/change-passcode','POST',{current:c,newPasscode:n});
   if(r.error){document.getElementById('passErr').textContent=r.error;return;}
   alert('変更しました！');closeModal('config');
 }
 
 // CSVエクスポート
 function exportCsv(type){
-  fetch(`/api/export?type=${type}`,{headers:{'X-Auth-Token':authToken}})
+  fetch(`${apiBase()}/export?type=${type}`,{headers:{'X-Auth-Token':authToken}})
   .then(r=>r.blob()).then(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=type+'_'+new Date().toISOString().split('T')[0]+'.csv';a.click();});
 }
 
@@ -473,7 +613,7 @@ function exportCsv(type){
 function openAddCustomer(){['addName','addPhone','addMemo'].forEach(id=>document.getElementById(id).value='');document.getElementById('addBirthday').value='';openModal('add');}
 async function addCustomer(){
   const n=document.getElementById('addName').value.trim();if(!n)return alert('名前を入力');
-  await api('/api/customer','POST',{name:n,phone:document.getElementById('addPhone').value.trim(),memo:document.getElementById('addMemo').value.trim(),birthday:document.getElementById('addBirthday').value});
+  await api(apiBase()+'/customer','POST',{name:n,phone:document.getElementById('addPhone').value.trim(),memo:document.getElementById('addMemo').value.trim(),birthday:document.getElementById('addBirthday').value});
   closeModal('add');await load();
 }
 
@@ -509,7 +649,7 @@ function openDetail(cid){
   document.getElementById('detailBody').innerHTML=h;openModal('detail');
 }
 
-async function updateAppt(cid,val){await api('/api/customer/update','POST',{cid,nextAppointment:val});await load();}
+async function updateAppt(cid,val){await api(apiBase()+'/customer/update','POST',{cid,nextAppointment:val});await load();}
 
 // 利用モーダル
 function openUse(cid,tid,info){
@@ -522,7 +662,7 @@ function openUse(cid,tid,info){
   openModal('use');
 }
 async function confirmUse(){
-  await api('/api/use','POST',{cid:useCid,tid:useTid,treatmentMemo:document.getElementById('useMemo').value,staff:document.getElementById('useStaff').value});
+  await api(apiBase()+'/ticket/use','POST',{cid:useCid,tid:useTid,memo:document.getElementById('useMemo').value,staff:document.getElementById('useStaff').value,date:new Date().toISOString().split('T')[0]});
   closeModal('use');await load();openDetail(useCid);
 }
 
@@ -532,8 +672,8 @@ function openTicketAdd(cid){selCid=cid;selType=null;const c=D.customers.find(c=>
   document.getElementById('ticketGrid').innerHTML=[4,8,16,24,48].map(n=>`<div class="tt-btn" onclick="selTT(this,${n})">${n}<span>${p[n]?'¥'+p[n].toLocaleString():'回券'}</span></div>`).join('');
   document.getElementById('ticketBtn').disabled=true;openModal('ticket');}
 function selTT(el,n){selType=n;document.querySelectorAll('.tt-btn').forEach(b=>b.classList.remove('sel'));el.classList.add('sel');document.getElementById('ticketBtn').disabled=false;}
-async function addTicket(){if(!selType||!selCid)return;await api('/api/ticket','POST',{cid:selCid,type:selType});closeModal('ticket');await load();openDetail(selCid);}
-async function delTicket(cid,tid){if(!confirm('削除しますか？'))return;await api('/api/ticket/delete','POST',{cid,tid});await load();openDetail(cid);}
+async function addTicket(){if(!selType||!selCid)return;await api(apiBase()+'/ticket/add','POST',{cid:selCid,type:selType});closeModal('ticket');await load();openDetail(selCid);}
+async function delTicket(cid,tid){if(!confirm('削除しますか？'))return;await api(apiBase()+'/ticket/delete','POST',{cid,tid});await load();openDetail(cid);}
 
 // 編集・削除
 async function editCustomer(cid){const c=D.customers.find(c=>c.cid===cid);if(!c)return;
@@ -541,9 +681,9 @@ async function editCustomer(cid){const c=D.customers.find(c=>c.cid===cid);if(!c)
   const phone=prompt('電話番号',c.phone||'');if(phone===null)return;
   const birthday=prompt('誕生日(YYYY-MM-DD)',c.birthday||'');if(birthday===null)return;
   const memo=prompt('メモ',c.memo||'');if(memo===null)return;
-  await api('/api/customer/update','POST',{cid,name,phone,birthday,memo});await load();openDetail(cid);
+  await api(apiBase()+'/customer/update','POST',{cid,name,phone,birthday,memo});await load();openDetail(cid);
 }
-async function deleteCustomer(cid){if(!confirm('削除しますか？'))return;await api('/api/customer/delete','POST',{cid});closeModal('detail');await load();}
+async function deleteCustomer(cid){if(!confirm('削除しますか？'))return;await api(apiBase()+'/customer/delete','POST',{cid});closeModal('detail');await load();}
 function logout(){if(!confirm('ログアウト？'))return;authToken='';localStorage.removeItem('bcare_token');showLogin();}
 
 // CSV
@@ -711,7 +851,7 @@ function previewCsv(){const items=parseCsvData();if(!items.length){document.getE
 
 async function doCsvImport(){const items=parseCsvData();if(!items.length){document.getElementById('csvError').textContent='インポートするデータがありません';return;}
   if(!confirm(items.length+'件をインポートしますか？'))return;
-  const r=await api('/api/bulk-import','POST',{items});
+  const r=await api(apiBase()+'/bulk-import','POST',{items});
   if(r.error){document.getElementById('csvError').textContent=r.error;return;}
   let msg=`${r.added}件登録！`;if(r.errors?.length)msg+=`\n${r.errors.length}件スキップ`;
   alert(msg);closeModal('csv');await load();}
@@ -722,13 +862,93 @@ function openModal(n){document.getElementById(n+'Overlay').classList.add('show')
 function closeModal(n){document.getElementById(n+'Overlay').classList.remove('show');document.getElementById(n+'Modal').classList.remove('show');}
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
 
+// ===== ログアウト =====
+function logout(){authToken='';localStorage.removeItem('cp_token_'+roomId);backToTop();}
+
+// ===== URL共有 =====
+function shareStoreUrl(){
+  const url=location.origin+'/store/'+roomId;
+  if(navigator.share){navigator.share({title:D.name||'回数券管理',url}).catch(()=>{});}
+  else{navigator.clipboard?.writeText(url);alert('URLをコピーしました\n'+url);}
+}
+
+// ===== CSVエクスポート修正 =====
+function exportCsv(type){
+  fetch(`${apiBase()}/export?type=${type}`,{headers:{'X-Auth-Token':authToken}})
+  .then(r=>r.blob()).then(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=type+'_'+new Date().toISOString().split('T')[0]+'.csv';a.click();});
+}
+
+// ===== LINE設定（管理者のみ） =====
+async function openLineConfig(){
+  document.getElementById('configTitle').textContent='\ud83d\udcf2 LINE\u9023\u643a\u8a2d\u5b9a';
+  document.getElementById('configBody').innerHTML='<div style="text-align:center;padding:20px;color:var(--text3)">\u8aad\u307f\u8fbc\u307f\u4e2d...</div>';
+  openModal('config');
+  const r=await api(apiBase()+'/line/config');
+  document.getElementById('configBody').innerHTML=`
+    <div style="font-size:11px;color:var(--text3);margin-bottom:12px;line-height:1.6">
+      LINE\u516c\u5f0f\u30a2\u30ab\u30a6\u30f3\u30c8\u306eMessaging API\u8a2d\u5b9a\u304b\u3089\u53d6\u5f97\u3057\u305f\u30c8\u30fc\u30af\u30f3\u3092\u8a2d\u5b9a\u3057\u307e\u3059\u3002<br>
+      <a href="https://developers.line.biz/console/" target="_blank" style="color:var(--accent)">LINE Developers Console →</a>
+    </div>
+    <div class="fg"><label>Channel Access Token</label><textarea id="lineToken" style="height:80px;font-size:10px;font-family:monospace" placeholder="LINE\u306eMessaging API\u8a2d\u5b9a\u304b\u3089\u53d6\u5f97"></textarea></div>
+    <div class="fg"><label>Channel Secret</label><input id="lineSecret" placeholder="Channel Secret"></div>
+    <div style="font-size:10px;color:var(--accent);margin-bottom:8px;word-break:break-all">Webhook URL: <b>${r.webhookUrl||''}</b></div>
+    <div style="font-size:9px;color:var(--text3);margin-bottom:12px">\u2191 \u3053\u306eURL\u3092LINE Developers Console\u306eWebhook URL\u306b\u8a2d\u5b9a\u3057\u3066\u304f\u3060\u3055\u3044</div>
+    <button class="btn-primary" onclick="saveLineConfig()">\u4fdd\u5b58\u3059\u308b</button>
+    ${r.hasToken?'<div style="margin-top:8px;text-align:center;font-size:11px;color:var(--green)">\u2705 \u8a2d\u5b9a\u6e08\u307f</div>':''}`;
+}
+async function saveLineConfig(){
+  const token=document.getElementById('lineToken').value.trim();
+  const secret=document.getElementById('lineSecret').value.trim();
+  if(!token){alert('Access Token\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044');return;}
+  const r=await api(apiBase()+'/line/config','POST',{channelAccessToken:token,channelSecret:secret});
+  if(r.error){alert(r.error);return;}
+  alert('\u4fdd\u5b58\u3057\u307e\u3057\u305f\uff01\n\nWebhook URL:\n'+r.webhookUrl+'\n\n\u3053\u306eURL\u3092LINE Developers Console\u306b\u8a2d\u5b9a\u3057\u3066\u304f\u3060\u3055\u3044');
+  closeModal('config');await load();
+}
+
+// ===== メンバー管理（管理者のみ） =====
+async function openMemberManage(){
+  document.getElementById('configTitle').textContent='\ud83d\udc65 \u30e1\u30f3\u30d0\u30fc\u7ba1\u7406';
+  document.getElementById('configBody').innerHTML='<div style="text-align:center;padding:20px;color:var(--text3)">\u8aad\u307f\u8fbc\u307f\u4e2d...</div>';
+  openModal('config');
+  const r=await api(apiBase()+'/members');
+  const members=r.members||[];
+  let h=`<div style="font-size:11px;color:var(--text2);margin-bottom:8px">${members.length}\u540d\u306e\u30e1\u30f3\u30d0\u30fc</div>`;
+  members.forEach(m=>{
+    const isMe=m.deviceId===deviceId;
+    const roleLabel=m.role==='admin'?'<span style="color:var(--accent);font-size:9px;font-weight:700">\ud83d\udc51 \u7ba1\u7406\u8005</span>':'<span style="font-size:9px;color:var(--text3)">\u30b9\u30bf\u30c3\u30d5</span>';
+    h+=`<div style="padding:10px;background:var(--card);border:1px solid var(--border);border-radius:10px;margin-bottom:6px${isMe?';border-color:var(--accent)':''}">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div><b style="font-size:13px">${esc(m.name)}${isMe?' (\u81ea\u5206)':''}</b><div style="font-size:9px;color:var(--text3)">\u6700\u7d42: ${m.lastSeen?.split('T')[0]||'-'} ${roleLabel}</div></div>
+        <div style="display:flex;gap:4px">`;
+    if(m.role!=='admin'&&!isMe){
+      h+=`<button style="padding:4px 8px;background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.2);border-radius:6px;color:var(--accent);font-size:9px;cursor:pointer" onclick="transferAdmin('${m.deviceId}','\u0027+esc(m.name)+\u0027')">\ud83d\udc51 \u7ba1\u7406\u8005\u306b</button>`;
+      h+=`<button style="padding:4px 8px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.2);border-radius:6px;color:var(--red);font-size:9px;cursor:pointer" onclick="removeMember('${m.deviceId}')">\u524a\u9664</button>`;
+    }
+    h+=`</div></div></div>`;
+  });
+  document.getElementById('configBody').innerHTML=h;
+}
+async function transferAdmin(targetDeviceId,name){
+  if(!confirm(name+'\u3055\u3093\u306b\u7ba1\u7406\u8005\u6a29\u9650\u3092\u8b72\u6e21\u3057\u307e\u3059\u304b\uff1f\n\u203b \u3042\u306a\u305f\u306f\u30b9\u30bf\u30c3\u30d5\u306b\u306a\u308a\u307e\u3059'))return;
+  const r=await api(apiBase()+'/transfer-admin','POST',{newAdminDeviceId:targetDeviceId});
+  if(r.error){alert(r.error);return;}
+  alert(r.newAdmin+'\u3055\u3093\u304c\u65b0\u3057\u3044\u7ba1\u7406\u8005\u306b\u306a\u308a\u307e\u3057\u305f');
+  myRole='staff';closeModal('config');await load();
+}
+async function removeMember(targetDeviceId){
+  if(!confirm('\u3053\u306e\u30e1\u30f3\u30d0\u30fc\u3092\u524a\u9664\u3057\u307e\u3059\u304b\uff1f'))return;
+  await api(apiBase()+'/member/remove','POST',{deviceId:targetDeviceId});
+  alert('\u524a\u9664\u3057\u307e\u3057\u305f');openMemberManage();
+}
+
 // ===== LINE連携機能 =====
 // LINE友だち一覧
 async function openLineFriends(){
   document.getElementById('configTitle').textContent='\ud83d\udc65 LINE\u53cb\u3060\u3061\u4e00\u89a7';
   document.getElementById('configBody').innerHTML='<div style="text-align:center;padding:20px;color:var(--text3)">\u8aad\u307f\u8fbc\u307f\u4e2d...</div>';
   openModal('config');
-  const r=await api('/api/line/friends');
+  const r=await api(apiBase()+'/line/friends');
   const friends=r.friends||[];
   if(!friends.length){document.getElementById('configBody').innerHTML='<div style="text-align:center;padding:20px;color:var(--text3)">LINE\u53cb\u3060\u3061\u304c\u3044\u307e\u305b\u3093<br><span style="font-size:10px">\u304a\u5ba2\u69d8\u306bB-care LINE\u3092\u53cb\u3060\u3061\u8ffd\u52a0\u3057\u3066\u3082\u3089\u3044\u307e\u3057\u3087\u3046</span></div>';return;}
   let h=`<div style="font-size:11px;color:var(--text2);margin-bottom:8px">${friends.length}\u540d\u306eLINE\u53cb\u3060\u3061</div>`;
@@ -754,7 +974,7 @@ async function openLineFriends(){
 async function linkLineFriend(userId){
   const sel=document.getElementById('link_'+userId.replace(/[^a-zA-Z0-9]/g,''));
   const cid=sel?.value||'';
-  const r=await api('/api/line/link','POST',{lineUserId:userId,cid});
+  const r=await api(apiBase()+'/line/link','POST',{lineUserId:userId,cid});
   if(r.error){alert(r.error);return;}
   alert('\u30ea\u30f3\u30af\u3057\u307e\u3057\u305f');openLineFriends();
 }
@@ -774,7 +994,7 @@ async function sendLineAll(){
   if(!msg){alert('\u30e1\u30c3\u30bb\u30fc\u30b8\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044');return;}
   if(!confirm('\u5168LINE\u53cb\u3060\u3061\u306b\u9001\u4fe1\u3057\u307e\u3059\u304b\uff1f'))return;
   document.getElementById('lineSendResult').innerHTML='<div style="color:var(--accent);font-size:11px">\u9001\u4fe1\u4e2d...</div>';
-  const r=await api('/api/line/send-test','POST',{message:msg});
+  const r=await api(apiBase()+'/line/send-broadcast','POST',{message:msg});
   if(r.error){document.getElementById('lineSendResult').innerHTML=`<div style="color:var(--red);font-size:11px">${r.error}</div>`;return;}
   const ok=r.results?.filter(x=>x.status==='ok').length||0;
   document.getElementById('lineSendResult').innerHTML=`<div style="color:var(--green);font-size:11px">\u2705 ${ok}\u540d\u306b\u9001\u4fe1\u5b8c\u4e86</div>`;
@@ -786,14 +1006,14 @@ async function sendDormantReminder(){
   const dormant=[...(a.month3||[]),...(a.month6||[])];
   if(!dormant.length){alert('\u4f11\u7720\u9867\u5ba2\u304c\u3044\u307e\u305b\u3093');return;}
   // LINE\u30ea\u30f3\u30af\u6e08\u307f\u306e\u4f11\u7720\u9867\u5ba2\u3092\u7279\u5b9a
-  const friends=(await api('/api/line/friends')).friends||[];
+  const friends=(await api(apiBase()+'/line/friends')).friends||[];
   const linkedDormant=dormant.filter(c=>friends.find(f=>f.linked===c.cid));
   if(!linkedDormant.length){
     alert(`\u4f11\u7720\u9867\u5ba2${dormant.length}\u540d\u304c\u3044\u307e\u3059\u304c\u3001LINE\u30ea\u30f3\u30af\u6e08\u307f\u304c0\u540d\u3067\u3059\u3002\n\u8a2d\u5b9a > LINE\u53cb\u3060\u3061\u4e00\u89a7 \u3067\u9867\u5ba2\u3068\u30ea\u30f3\u30af\u3057\u3066\u304f\u3060\u3055\u3044`);
     return;
   }
   if(!confirm(`${linkedDormant.length}\u540d\u306e\u4f11\u7720\u9867\u5ba2\u306bLINE\u30ea\u30de\u30a4\u30f3\u30c9\u3092\u9001\u4fe1\u3057\u307e\u3059\u304b\uff1f`))return;
-  const r=await api('/api/line/send-dormant','POST',{});
+  const r=await api(apiBase()+'/line/send-dormant','POST',{});
   if(r.error){alert(r.error);return;}
   alert(`\u2705 ${r.sent||0}\u540d\u306b\u30ea\u30de\u30a4\u30f3\u30c9\u9001\u4fe1\u3057\u307e\u3057\u305f`);
 }
@@ -803,14 +1023,14 @@ async function sendExpiryNotice(){
   const a=D.alerts||{};
   const expiring=a.expiring||[];
   if(!expiring.length){alert('\u671f\u9650\u5207\u308c\u9593\u8fd1\u306e\u56de\u6570\u5238\u306f\u3042\u308a\u307e\u305b\u3093');return;}
-  const friends=(await api('/api/line/friends')).friends||[];
+  const friends=(await api(apiBase()+'/line/friends')).friends||[];
   const linkedExp=expiring.filter(c=>friends.find(f=>f.linked===c.cid));
   if(!linkedExp.length){
     alert(`\u671f\u9650\u5207\u308c\u9593\u8fd1${expiring.length}\u4ef6\u3042\u308a\u307e\u3059\u304c\u3001LINE\u30ea\u30f3\u30af\u6e08\u307f\u304c0\u4ef6\u3067\u3059`);
     return;
   }
   if(!confirm(`${linkedExp.length}\u540d\u306b\u671f\u9650\u5207\u308c\u901a\u77e5\u3092\u9001\u4fe1\u3057\u307e\u3059\u304b\uff1f`))return;
-  const r=await api('/api/line/send-expiry','POST',{});
+  const r=await api(apiBase()+'/line/send-expiry','POST',{});
   if(r.error){alert(r.error);return;}
   alert(`\u2705 ${r.sent||0}\u540d\u306b\u671f\u9650\u901a\u77e5\u3092\u9001\u4fe1\u3057\u307e\u3057\u305f`);
 }
@@ -828,7 +1048,7 @@ function openLineSendTo(cid){
 async function sendLineIndividual(cid){
   const msg=document.getElementById('lineIndMsg').value.trim();
   if(!msg){alert('\u30e1\u30c3\u30bb\u30fc\u30b8\u3092\u5165\u529b');return;}
-  const r=await api('/api/line/send-individual','POST',{cid,message:msg});
+  const r=await api(apiBase()+'/line/send-individual','POST',{cid,message:msg});
   if(r.error){document.getElementById('lineIndResult').innerHTML=`<div style="color:var(--red);font-size:11px">${r.error}</div>`;return;}
   document.getElementById('lineIndResult').innerHTML='<div style="color:var(--green);font-size:11px">\u2705 \u9001\u4fe1\u3057\u307e\u3057\u305f</div>';
 }
