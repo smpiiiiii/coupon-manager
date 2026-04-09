@@ -318,18 +318,11 @@ module.exports = async (req, res) => {
       return res.status(200).json({
         name: data.name, admin: data.admin, role: session.role,
         customers: data.customers, settings, alerts,
-        hasLine: !!(data.lineConfig?.channelAccessToken || process.env.LINE_CHANNEL_ACCESS_TOKEN),
+        hasLine: !!(data.lineConfig?.channelAccessToken),
       });
     }
 
-    // LINE設定が無い場合、環境変数から自動取り込み（初回アクセス時）
-    if (!data.lineConfig?.channelAccessToken && process.env.LINE_CHANNEL_ACCESS_TOKEN) {
-      data.lineConfig = {
-        channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
-        channelSecret: process.env.LINE_CHANNEL_SECRET || '',
-      };
-      await saveRoomData(roomId, data);
-    }
+
 
     // === 顧客追加 ===
     if (action === 'customer' && req.method === 'POST') {
@@ -649,23 +642,19 @@ module.exports = async (req, res) => {
       return res.status(200).json({ status: 'ok', sent });
     }
 
-    // === 旧データ削除 + LINE自動セットアップ ===
-    if (action === 'migrate' && req.method === 'POST') {
+    // === ルームデータリセット ===
+    if (action === 'reset' && req.method === 'POST') {
       if (!isAdmin) return res.status(403).json({ error: '管理者のみ実行できます' });
-      // 旧B-careデータを削除
+      // 顧客データクリア
+      data.customers = [];
+      data.lineConfig = { channelAccessToken: '', channelSecret: '' };
+      await saveRoomData(roomId, data);
+      // LINE友だちもクリア
+      await redis.del(`cp:${roomId}:line_friends`);
+      // 旧データも削除
       const oldKeys = ['bcare:data', 'bcare:settings', 'bcare:line_friends', 'bcare:tokens', 'bcare:passcode'];
-      let deleted = 0;
-      for (const k of oldKeys) {
-        try { const r = await redis.del(k); if (r) deleted++; } catch(e) {}
-      }
-      // Vercel環境変数からLINEトークンを自動取り込み
-      const envLineToken = process.env.LINE_CHANNEL_ACCESS_TOKEN || '';
-      const envLineSecret = process.env.LINE_CHANNEL_SECRET || '';
-      if (envLineToken && !data.lineConfig?.channelAccessToken) {
-        data.lineConfig = { channelAccessToken: envLineToken, channelSecret: envLineSecret };
-        await saveRoomData(roomId, data);
-      }
-      return res.status(200).json({ status: 'ok', deleted, hasLine: !!(data.lineConfig?.channelAccessToken) });
+      for (const k of oldKeys) { try { await redis.del(k); } catch(e) {} }
+      return res.status(200).json({ status: 'ok' });
     }
 
     return res.status(404).json({ error: 'Not found' });
