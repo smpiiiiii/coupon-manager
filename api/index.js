@@ -642,37 +642,23 @@ module.exports = async (req, res) => {
       return res.status(200).json({ status: 'ok', sent });
     }
 
-    // === データマイグレーション（既存B-careデータ取り込み） ===
+    // === 旧データ削除 + LINE自動セットアップ ===
     if (action === 'migrate' && req.method === 'POST') {
       if (!isAdmin) return res.status(403).json({ error: '管理者のみ実行できます' });
-      // 旧データ(bcare:data)を読み込んでこのルームに取り込む
-      const oldData = await redis.get('bcare:data');
-      if (!oldData) return res.status(400).json({ error: '旧データが見つかりません' });
-      const old = parseData(oldData);
-      if (!old?.customers?.length) return res.status(400).json({ error: '旧データに顧客がいません' });
-      let imported = 0;
-      for (const c of old.customers) {
-        if (data.customers.find(x => x.name === c.name)) continue;
-        data.customers.push(c);
-        imported++;
+      // 旧B-careデータを削除
+      const oldKeys = ['bcare:data', 'bcare:settings', 'bcare:line_friends', 'bcare:tokens', 'bcare:passcode'];
+      let deleted = 0;
+      for (const k of oldKeys) {
+        try { const r = await redis.del(k); if (r) deleted++; } catch(e) {}
       }
-      // 旧設定もマージ
-      const oldSettings = await redis.get('bcare:settings');
-      if (oldSettings) { data.settings = { ...data.settings, ...parseData(oldSettings) }; }
       // Vercel環境変数からLINEトークンを自動取り込み
       const envLineToken = process.env.LINE_CHANNEL_ACCESS_TOKEN || '';
       const envLineSecret = process.env.LINE_CHANNEL_SECRET || '';
       if (envLineToken && !data.lineConfig?.channelAccessToken) {
         data.lineConfig = { channelAccessToken: envLineToken, channelSecret: envLineSecret };
+        await saveRoomData(roomId, data);
       }
-      await saveRoomData(roomId, data);
-      // 旧LINE友だちデータも移行
-      const oldFriends = await redis.get('bcare:line_friends');
-      if (oldFriends) {
-        const friends = parseData(oldFriends) || [];
-        if (friends.length) await saveLineFriends(roomId, friends);
-      }
-      return res.status(200).json({ status: 'ok', imported, hasLine: !!(data.lineConfig?.channelAccessToken) });
+      return res.status(200).json({ status: 'ok', deleted, hasLine: !!(data.lineConfig?.channelAccessToken) });
     }
 
     return res.status(404).json({ error: 'Not found' });
