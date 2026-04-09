@@ -323,8 +323,8 @@ function showLoginForRoom(){
   // 店舗名をAPIで取得
   fetch('/api/check-room',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({roomId})})
   .then(r=>r.json()).then(j=>{
-    document.getElementById('loginStoreName').textContent=j.name||'ログイン';
-    document.getElementById('loginStoreSub').textContent='パスコードを入力してください';
+    document.getElementById('loginStoreName').textContent=j.name||'参加';
+    document.getElementById('loginStoreSub').textContent='あなたの名前を入力して参加';
   }).catch(()=>{});
   showLogin();
 }
