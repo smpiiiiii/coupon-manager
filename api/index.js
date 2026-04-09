@@ -154,24 +154,22 @@ module.exports = async (req, res) => {
       return res.status(200).json({ id: roomId, token, name: storeName });
     }
 
-    // === ルームログイン ===
+    // === ルーム参加 ===
     if (pathname === '/api/login' && req.method === 'POST') {
       const roomId = (body.roomId || '').trim();
-      const passcode = (body.passcode || '').trim();
       const userName = (body.userName || '').trim();
       const deviceId = (body.deviceId || '').trim();
 
       if (!roomId) return res.status(400).json({ error: 'ルームIDが必要です' });
+      if (!userName) return res.status(400).json({ error: '名前を入力してください' });
       const data = await getRoomData(roomId);
       if (!data) return res.status(404).json({ error: '店舗が見つかりません' });
-      if (data.passcodeHash !== hashPasscode(passcode)) return res.status(401).json({ error: 'パスコードが違います' });
 
       // メンバー追跡
       const members = await getMembers(roomId);
       const isAdmin = data.adminDeviceId === deviceId;
       const role = isAdmin ? 'admin' : 'staff';
-      trackMember(members, userName || '名称未設定', deviceId);
-      // ロール更新
+      trackMember(members, userName, deviceId);
       const me = members.find(m => m.deviceId === deviceId);
       if (me) me.role = role;
       await saveMembers(roomId, members);
