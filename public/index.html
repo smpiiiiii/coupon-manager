@@ -106,12 +106,30 @@ body{font-family:'Noto Sans JP','Inter',sans-serif;background:var(--bg);color:va
 </head>
 <body>
 <div class="app" id="app">
-  <!-- トップ画面（未ログイン） -->
+  <!-- トップ画面 -->
   <div id="topScreen" class="login-screen">
     <div class="logo">💆</div><h1>回数券管理</h1><div class="sub">COUPON TICKET MANAGER</div>
     <div id="topHistory" style="width:100%;max-width:320px"></div>
-    <button class="login-btn" onclick="openCreateStore()" style="max-width:320px">＋ 新しい店舗を作成</button>
-    <button class="login-btn" onclick="openJoinStore()" style="max-width:320px;background:linear-gradient(135deg,#64748b,#475569)">🔗 URLで参加する</button>
+    <!-- メインボタン -->
+    <div id="topButtons" style="width:100%;max-width:320px">
+      <button class="login-btn" onclick="showCreateForm()" style="width:100%">＋ 新しい店舗を作成</button>
+      <button class="login-btn" onclick="showJoinForm()" style="width:100%;background:linear-gradient(135deg,#64748b,#475569)">🔗 URLで参加する</button>
+    </div>
+    <!-- 店舗作成フォーム -->
+    <div id="createForm" style="display:none;width:100%;max-width:320px">
+      <div style="font-size:14px;font-weight:900;color:var(--accent);margin-bottom:12px">＋ 新しい店舗を作成</div>
+      <div class="fg"><label>店舗名</label><input id="createName" placeholder="B-care / 〇〇整体院" style="text-align:center"></div>
+      <div class="fg"><label>あなたの名前（管理者）</label><input id="createAdmin" placeholder="田中" style="text-align:center"></div>
+      <button class="login-btn" onclick="createStore()" style="width:100%">作成する</button>
+      <button style="background:none;border:none;color:var(--text3);font-size:12px;margin-top:8px;cursor:pointer;width:100%;text-align:center" onclick="showTopButtons()">← 戻る</button>
+    </div>
+    <!-- URL参加フォーム -->
+    <div id="joinForm" style="display:none;width:100%;max-width:320px">
+      <div style="font-size:14px;font-weight:900;color:var(--accent);margin-bottom:12px">🔗 URLで参加する</div>
+      <div class="fg"><label>店舗ID（URLの末尾8文字）</label><input id="joinId" placeholder="例: a1b2c3d4" maxlength="8" style="text-align:center"></div>
+      <button class="login-btn" onclick="checkAndJoin()" style="width:100%">確認する</button>
+      <button style="background:none;border:none;color:var(--text3);font-size:12px;margin-top:8px;cursor:pointer;width:100%;text-align:center" onclick="showTopButtons()">← 戻る</button>
+    </div>
     <button id="installBtnLogin" class="login-btn" style="display:none;max-width:320px;margin-top:8px;background:linear-gradient(135deg,#a78bfa,#7c3aed)" onclick="doInstall()">📲 アプリをインストール</button>
   </div>
   <!-- 店舗参加画面 -->
@@ -254,48 +272,33 @@ function renderHistory(){
   ).join('');
 }
 
+// トップ画面のフォーム切り替え
+function showTopButtons(){document.getElementById('topButtons').style.display='block';document.getElementById('createForm').style.display='none';document.getElementById('joinForm').style.display='none';}
+function showCreateForm(){document.getElementById('topButtons').style.display='none';document.getElementById('createForm').style.display='block';document.getElementById('joinForm').style.display='none';}
+function showJoinForm(){document.getElementById('topButtons').style.display='none';document.getElementById('createForm').style.display='none';document.getElementById('joinForm').style.display='block';}
+
 // 店舗作成
-function openCreateStore(){
-  document.getElementById('configTitle').textContent='＋ 新しい店舗を作成';
-  document.getElementById('configBody').innerHTML=`
-    <div class="fg"><label>店舗名 *</label><input id="createName" placeholder="B-care / 〇〇整体院"></div>
-    <div class="fg"><label>あなたの名前（管理者）</label><input id="createAdmin" placeholder="田中"></div>
-    <div class="fg"><label>パスコード *（4文字以上・スタッフ共有用）</label><input id="createPass" type="password" placeholder="0000" minlength="4"></div>
-    <div style="font-size:10px;color:var(--text3);margin-bottom:12px;line-height:1.6">⚠️ パスコードはスタッフ全員で共有します。<br>URLを知っている人だけがアクセスできます。</div>
-    <button class="btn-primary" onclick="createStore()">作成する</button>`;
-  openModal('config');
-}
 async function createStore(){
   const name=document.getElementById('createName').value.trim();
   const admin=document.getElementById('createAdmin').value.trim();
-  const pass=document.getElementById('createPass').value.trim();
   if(!name){alert('店舗名を入力してください');return;}
-  if(!pass||pass.length<4){alert('パスコードは4文字以上');return;}
+  if(!admin){alert('あなたの名前を入力してください');return;}
   try{
-    const r=await fetch('/api/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,creator:admin,passcode:pass,deviceId})});
+    const r=await fetch('/api/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,creator:admin,passcode:'0000',deviceId})});
     const j=await r.json();
     if(j.error){alert(j.error);return;}
-    roomId=j.id;authToken=j.token;
+    roomId=j.id;authToken=j.token;myRole='admin';
     localStorage.setItem('cp_token_'+roomId,authToken);
     addHistory(roomId,name);
-    closeModal('config');
     history.pushState(null,'','/store/'+roomId);
     showApp();
     document.getElementById('storeTitle').textContent='💆 '+name;
     load();
-    // URL共有案内
-    setTimeout(()=>{alert('店舗を作成しました！\n\nスタッフには以下のURLとパスコードを共有してください:\n'+location.href);},500);
+    setTimeout(()=>{alert('店舗を作成しました！\n\nスタッフにはこのURLを共有してください:\n'+location.href);},500);
   }catch{alert('通信エラー');}
 }
 
 // URL参加
-function openJoinStore(){
-  document.getElementById('configTitle').textContent='🔗 URLで参加';
-  document.getElementById('configBody').innerHTML=`
-    <div class="fg"><label>店舗ID（URLの末尾8文字）</label><input id="joinId" placeholder="例: a1b2c3d4" maxlength="8"></div>
-    <button class="btn-primary" onclick="checkAndJoin()">確認する</button>`;
-  openModal('config');
-}
 async function checkAndJoin(){
   const id=document.getElementById('joinId').value.trim();
   if(!id){alert('IDを入力');return;}
@@ -303,7 +306,6 @@ async function checkAndJoin(){
     const r=await fetch('/api/check-room',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({roomId:id})});
     const j=await r.json();
     if(j.error){alert('見つかりません');return;}
-    closeModal('config');
     enterStore(id);
   }catch{alert('通信エラー');}
 }
