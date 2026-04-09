@@ -541,6 +541,10 @@ function renderSettings(area){
     // LINE友だち数を非同期で取得
     setTimeout(()=>{api(apiBase()+'/line/friends').then(r=>{const el=document.getElementById('lineFriendCount');if(el)el.textContent=(r.friends?.length||0)+'名';}).catch(()=>{});},100);
   }
+  // 管理者のみ: マイグレーション
+  if(isAdmin && D.customers.length===0){h+=`
+    <div class="sec-title" style="margin-top:20px">📦 データ移行</div>
+    <div class="settings-item" onclick="migrateOldData()"><span class="s-label">📥 旧B-careデータを取り込む</span><span class="s-value">→</span></div>`;}
   h+=`
     <div class="sec-title" style="margin-top:20px">📋 その他</div>
     <div class="settings-item" onclick="shareStoreUrl()"><span class="s-label">📤 URLを共有</span><span class="s-value">→</span></div>
@@ -864,6 +868,17 @@ function esc(s){const d=document.createElement('div');d.textContent=s;return d.i
 
 // ===== ログアウト =====
 function logout(){authToken='';localStorage.removeItem('cp_token_'+roomId);backToTop();}
+
+// ===== 旧データ移行 =====
+async function migrateOldData(){
+  if(!confirm('旧B-careの顧客データをこのルームに取り込みますか？\n※既存の顧客は重複しません'))return;
+  try{
+    const r=await api(apiBase()+'/migrate','POST',{});
+    if(r.error){alert('移行エラー: '+r.error);return;}
+    alert(r.imported+'件の顧客データを取り込みました！');
+    await load();
+  }catch(e){alert('移行に失敗しました: '+e.message);}
+}
 
 // ===== URL共有 =====
 function shareStoreUrl(){
